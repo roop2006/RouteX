@@ -1,7 +1,7 @@
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from ..models.traffic_event import TrafficEvent
+from ..models.traffic_stream_event import TrafficStreamEvent
 from ..schemas.traffic_event import TrafficEventCreate
 
 
@@ -10,7 +10,16 @@ def create_traffic_event(
     event: TrafficEventCreate
 ):
     try:
-        db_event = TrafficEvent(**event.model_dump())
+        db_event = TrafficStreamEvent(
+            total_vehicles=event.total_vehicles,
+            vehicle_types=event.vehicle_types,
+            lane_counts=event.lane_counts,
+            direction_counts=event.direction_counts,
+            average_speed=event.average_speed,
+            density=event.density,
+            congestion_level=event.congestion_level,
+            events=event.events
+        )
 
         db.add(db_event)
         db.commit()
@@ -27,23 +36,18 @@ def get_traffic_events(
     db: Session,
     skip: int = 0,
     limit: int = 50,
-    vehicle_type: str | None = None,
     congestion_level: str | None = None
 ):
-    query = db.query(TrafficEvent)
-
-    if vehicle_type:
-        query = query.filter(
-            TrafficEvent.vehicle_type == vehicle_type
-        )
+    query = db.query(TrafficStreamEvent)
 
     if congestion_level:
         query = query.filter(
-            TrafficEvent.congestion_level == congestion_level
+            TrafficStreamEvent.congestion_level == congestion_level
         )
 
     return (
         query
+        .order_by(TrafficStreamEvent.id.desc())
         .offset(skip)
         .limit(limit)
         .all()

@@ -13,3 +13,23 @@ __pycache__/
 
 .DS_Store
 Thumbs.db
+
+
+# Local datasets and generated data
+data/
+
+# Local ML artifacts and downloaded model weights
+ml/artifacts/
+*.pt
+*.pth
+*.onnx
+
+# Database backups
+*.dump
+*.sql
+
+# Temporary Git inspection reports
+git-status-check.txt
+git-diff-stat.txt
+git-staged-stat.txt
+staged-files.txt

@@ -1,24 +1,50 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 
 class TrafficEventCreate(BaseModel):
-    vehicle_type: str = Field(min_length=1, max_length=50)
-    vehicle_count: int = Field(ge=0)
-    latitude: float = Field(ge=-90, le=90)
-    longitude: float = Field(ge=-180, le=180)
-    congestion_level: str = Field(min_length=1, max_length=20)
+    total_vehicles: int = Field(ge=0)
+
+    vehicle_types: dict[str, int]
+
+    lane_counts: dict[str, int]
+
+    direction_counts: dict[str, int]
+
+    average_speed: float = Field(ge=0)
+
+    density: float = Field(ge=0)
+
+    congestion_level: str = Field(
+        min_length=1,
+        max_length=20
+    )
+
+    events: list[dict[str, Any]] = []
 
 
 class TrafficEventResponse(BaseModel):
     id: int
-    vehicle_type: str
-    vehicle_count: int
-    latitude: float
-    longitude: float
+
+    total_vehicles: int
+
+    vehicle_types: dict[str, int]
+
+    lane_counts: dict[str, int]
+
+    direction_counts: dict[str, int]
+
+    average_speed: float
+
+    density: float
+
     congestion_level: str
-    detected_at: datetime
+
+    events: list[dict[str, Any]]
+
+    timestamp: datetime
 
     class Config:
         from_attributes = True

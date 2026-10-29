@@ -1,0 +1,38 @@
+[
+    {
+        "model": "linear_regression",
+        "task": "forecasting",
+        "metrics": {
+            "mae": 4.4909639020273444e-14,
+            "rmse": 5.16377356883205e-14,
+            "r2": 1.0
+        }
+    },
+    {
+        "model": "random_forest",
+        "task": "forecasting",
+        "metrics": {
+            "mae": 0.020788590604026824,
+            "rmse": 0.04613683325229781,
+            "r2": 0.9999908420731758
+        }
+    },
+    {
+        "model": "gradient_boosting",
+        "task": "forecasting",
+        "metrics": {
+            "mae": 0.059163761074773884,
+            "rmse": 0.08848790230222267,
+            "r2": 0.999966312451748
+        }
+    },
+    {
+        "model": "baseline",
+        "task": "forecasting",
+        "metrics": {
+            "mae": 16.013186229539862,
+            "rmse": 19.533225330957936,
+            "r2": -0.6415326490129072
+        }
+    }
+]

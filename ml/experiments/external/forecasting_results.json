@@ -1,0 +1,94 @@
+{
+    "dataset": "Metro Interstate Traffic Volume",
+    "date_range": {
+        "start": "2012-10-02 09:00:00",
+        "end": "2018-09-30 23:00:00"
+    },
+    "features": [
+        "hour",
+        "day_of_week",
+        "month",
+        "is_weekend",
+        "is_peak_hour",
+        "traffic_lag_1",
+        "traffic_lag_2",
+        "traffic_lag_3",
+        "traffic_rolling_mean_3"
+    ],
+    "model_results": [
+        {
+            "model": "random_forest",
+            "validation_metrics": {
+                "mae": 265.11774594411474,
+                "rmse": 416.8467966802673,
+                "r2": 0.9550430225162366
+            },
+            "training_iterations_or_estimators": 200
+        },
+        {
+            "model": "hist_gradient_boosting",
+            "validation_metrics": {
+                "mae": 273.66501602660446,
+                "rmse": 421.89276065453123,
+                "r2": 0.9539480191858364
+            },
+            "training_iterations_or_estimators": 200
+        },
+        {
+            "model": "linear_regression",
+            "validation_metrics": {
+                "mae": 836.1397024805567,
+                "rmse": 1048.0558451815812,
+                "r2": 0.7158072350451821
+            },
+            "training_iterations_or_estimators": null
+        },
+        {
+            "model": "previous_observation_baseline",
+            "validation_metrics": {
+                "mae": 903.0952973720608,
+                "rmse": 1302.1309426626638,
+                "r2": 0.5613142908088236
+            },
+            "training_iterations_or_estimators": 0
+        },
+        {
+            "model": "mean_baseline",
+            "validation_metrics": {
+                "mae": 1721.3194567849007,
+                "rmse": 1967.9035864283105,
+                "r2": -0.001963273331493376
+            },
+            "training_iterations_or_estimators": null
+        }
+    ],
+    "selected_model": "random_forest",
+    "selected_model_type": "RandomForestRegressor",
+    "selected_model_parameters": {
+        "bootstrap": true,
+        "ccp_alpha": 0.0,
+        "criterion": "squared_error",
+        "max_depth": 12,
+        "max_features": 1.0,
+        "max_leaf_nodes": null,
+        "max_samples": null,
+        "min_impurity_decrease": 0.0,
+        "min_samples_leaf": 2,
+        "min_samples_split": 2,
+        "min_weight_fraction_leaf": 0.0,
+        "monotonic_cst": null,
+        "n_estimators": 200,
+        "n_jobs": -1,
+        "oob_score": false,
+        "random_state": 42,
+        "verbose": 0,
+        "warm_start": false
+    },
+    "random_seed": 42,
+    "final_test_metrics": {
+        "mae": 253.39381940534375,
+        "rmse": 404.2296704671676,
+        "r2": 0.9584816371462244
+    },
+    "timestamp": "2026-10-21T12:27:40.958865"
+}
