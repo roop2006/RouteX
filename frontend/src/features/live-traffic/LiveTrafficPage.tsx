@@ -11,6 +11,8 @@ import {
   Layers,
   Camera,
   AlertTriangle,
+  ShieldAlert,
+  MapPin,
 } from "lucide-react";
 import { PageHeader } from "../../components/layout/PageHeader";
 import { MetricCard } from "../../components/dashboard/MetricCard";
@@ -18,7 +20,7 @@ import { VehicleDistribution } from "../../components/dashboard/VehicleDistribut
 import { LoadingState } from "../../components/common/LoadingState";
 import { ErrorState } from "../../components/common/ErrorState";
 import { EmptyState } from "../../components/common/EmptyState";
-import { useLiveTraffic } from "../../hooks/useLiveTraffic";
+import { useLiveTraffic, useLiveIncidents } from "../../hooks/useLiveTraffic";
 import { formatDensity, formatSpeed, formatTimestamp, formatTimeOnly } from "../../utils/formatters";
 import { getCongestionBadgeClass } from "../../utils/congestion";
 
@@ -34,6 +36,8 @@ export const LiveTrafficPage: React.FC = () => {
     dataUpdatedAt,
   } = useLiveTraffic({ pollingEnabled: !isPollingPaused });
 
+  const { data: incidentsData, isFetching: isFetchingIncidents } = useLiveIncidents();
+
   const handleTogglePolling = () => {
     setIsPollingPaused((prev) => !prev);
   };
@@ -41,16 +45,26 @@ export const LiveTrafficPage: React.FC = () => {
   const laneCounts = liveTraffic?.lane_counts || {};
   const directionCounts = liveTraffic?.direction_counts || {};
   const congestion = liveTraffic?.congestion_level || "UNKNOWN";
+  const isTomTom = liveTraffic?.source === "tomtom_traffic_flow";
+  const sourceLabel = isTomTom
+    ? "TomTom Live Traffic"
+    : liveTraffic?.source === "redis_live_stream"
+    ? "Redis Live Buffer"
+    : liveTraffic?.source === "database_stream_telemetry"
+    ? "Database Stream Telemetry"
+    : liveTraffic?.source === "video_analysis"
+    ? "Video Analysis Ingestion"
+    : liveTraffic?.source || "Live Telemetry Feed";
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Live Traffic Telemetry"
-        subtitle="Active sensor snapshots retrieved from Redis state store"
+        subtitle="Active sensor snapshots retrieved from RouteX streaming infrastructure"
         badge={
           <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            Telemetry Active
+            {sourceLabel}
           </span>
         }
         actions={
@@ -95,8 +109,9 @@ export const LiveTrafficPage: React.FC = () => {
         <div className="flex items-center gap-2">
           <Activity className="w-4 h-4 text-blue-400 flex-shrink-0" />
           <span>
-            <strong className="text-slate-200">Sampling Protocol:</strong> High-frequency snapshot polled from Redis key{" "}
-            <code className="text-slate-300 bg-slate-800 px-1.5 py-0.5 rounded">routex:traffic:latest</code> (5-second cadence).
+            <strong className="text-slate-200">Data Source:</strong> {sourceLabel}{" "}
+            {liveTraffic?.intersection_id ? `(Sensor ${liveTraffic.intersection_id})` : ""}{" "}
+            • Polled on a 5-second cadence.
           </span>
         </div>
         <div className="flex items-center gap-3 font-mono text-[11px] text-slate-400">
@@ -106,18 +121,21 @@ export const LiveTrafficPage: React.FC = () => {
       </div>
 
       {isLoading ? (
-        <LoadingState message="Connecting to live Redis traffic buffer..." skeletonLines={4} />
+        <LoadingState message="Connecting to live RouteX traffic telemetry..." skeletonLines={4} />
       ) : error ? (
         <ErrorState
           title="Live Traffic Stream Unavailable"
           error={error}
-          message="Unable to fetch live traffic snapshot from the backend. The Redis cache may be empty or unpopulated."
+          message="Unable to fetch live traffic snapshot from the backend. Upstream sensors may be offline."
           onRetry={() => refetch()}
         />
-      ) : !liveTraffic ? (
+      ) : !liveTraffic || liveTraffic.status === "UNAVAILABLE" ? (
         <EmptyState
-          title="No Live Traffic Data"
-          description="Redis currently has no active traffic data published by the computer vision or Kafka streaming workers."
+          title="No Active Live Traffic Stream"
+          description={
+            liveTraffic?.message ||
+            "No streaming camera is currently publishing live telemetry into Redis or database buffers."
+          }
         />
       ) : (
         <div className="space-y-6">
@@ -167,7 +185,11 @@ export const LiveTrafficPage: React.FC = () => {
             <MetricCard
               title="Mean Velocity"
               value={formatSpeed(liveTraffic.average_speed ?? 0)}
-              subtitle="Calculated over active tracks"
+              subtitle={
+                liveTraffic.free_flow_speed
+                  ? `Free-flow: ${formatSpeed(liveTraffic.free_flow_speed)}`
+                  : "Calculated over active tracks"
+              }
               icon={<Gauge className="w-5 h-5 text-emerald-400" />}
               accentColor="emerald"
             />
@@ -240,24 +262,67 @@ export const LiveTrafficPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Right Column: Sensor Metadata */}
+            {/* Right Column: Sensor Metadata & TomTom Stats */}
             <div className="space-y-6">
               <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-sm space-y-4">
                 <h3 className="text-sm font-semibold text-white border-b border-slate-800 pb-3 flex items-center gap-2">
-                  <Camera className="w-4 h-4 text-emerald-400" />
-                  <span>Optical Sensor Metadata</span>
+                  {isTomTom ? (
+                    <Compass className="w-4 h-4 text-emerald-400" />
+                  ) : (
+                    <Camera className="w-4 h-4 text-emerald-400" />
+                  )}
+                  <span>{isTomTom ? "TomTom Flow Metadata" : "Optical Sensor Metadata"}</span>
                 </h3>
 
                 <div className="space-y-3 text-xs">
-                  <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
-                    <span className="text-slate-400">Camera ID</span>
-                    <span className="font-mono font-bold text-white">{liveTraffic.camera_id || "CAM_001"}</span>
-                  </div>
+                  {isTomTom ? (
+                    <>
+                      <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400">Data Provider</span>
+                        <span className="font-mono font-bold text-emerald-400">TomTom Traffic API</span>
+                      </div>
 
-                  <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
-                    <span className="text-slate-400">Intersection</span>
-                    <span className="font-mono font-bold text-indigo-300">{liveTraffic.intersection_id || "INT_001"}</span>
-                  </div>
+                      <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400">Road Class</span>
+                        <span className="font-mono font-bold text-white">{liveTraffic.frc || "FRC2 (Major Arterial)"}</span>
+                      </div>
+
+                      <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400">Free-Flow Speed</span>
+                        <span className="font-mono text-slate-200">
+                          {formatSpeed(liveTraffic.free_flow_speed ?? liveTraffic.average_speed ?? 0)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400">Confidence Score</span>
+                        <span className="font-mono font-bold text-emerald-400">
+                          {Math.round((liveTraffic.confidence ?? 1.0) * 100)}%
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400">Segment Delay</span>
+                        <span className="font-mono text-amber-300">
+                          {liveTraffic.delay_seconds ? `${liveTraffic.delay_seconds}s` : "0s (Nominal)"}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400">Camera ID</span>
+                        <span className="font-mono font-bold text-white">{liveTraffic.camera_id || "CAM_001"}</span>
+                      </div>
+
+                      <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400">Intersection</span>
+                        <span className="font-mono font-bold text-indigo-300">
+                          {liveTraffic.intersection_id || "INT_001"}
+                        </span>
+                      </div>
+                    </>
+                  )}
 
                   <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
                     <span className="text-slate-400">Coordinates</span>
@@ -269,12 +334,14 @@ export const LiveTrafficPage: React.FC = () => {
                   </div>
 
                   <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
-                    <span className="text-slate-400">Events in Frame</span>
-                    <span className="font-mono text-slate-200">{liveTraffic.events?.length ?? 0} incidents</span>
+                    <span className="text-slate-400">Observation Mode</span>
+                    <span className="font-mono text-slate-200">
+                      {isTomTom ? "Live Segment Flow" : `${liveTraffic.events?.length ?? 0} optical events`}
+                    </span>
                   </div>
 
                   <div className="flex items-center justify-between py-1">
-                    <span className="text-slate-400">Full Timestamp</span>
+                    <span className="text-slate-400">Snapshot Timestamp</span>
                     <span className="font-mono text-[11px] text-slate-300">
                       {formatTimestamp(liveTraffic.timestamp)}
                     </span>
@@ -282,6 +349,73 @@ export const LiveTrafficPage: React.FC = () => {
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Live Incidents & Road Disruptions Panel (from TomTom) */}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-rose-400" />
+                <h3 className="text-sm font-semibold text-white">
+                  Chennai Metro Live Incidents & Road Disruptions
+                </h3>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <span>Provider: TomTom Traffic Incidents API</span>
+                <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">
+                  {incidentsData?.count ?? 0} active
+                </span>
+                {isFetchingIncidents && <span className="text-blue-400 animate-pulse text-[11px]">Syncing...</span>}
+              </div>
+            </div>
+
+            {incidentsData && incidentsData.incidents && incidentsData.incidents.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {incidentsData.incidents.slice(0, 6).map((inc) => (
+                  <div
+                    key={inc.id}
+                    className="p-3.5 rounded-lg border border-slate-800/80 bg-slate-950/40 space-y-2 text-xs hover:border-slate-700/80 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-slate-200 truncate">{inc.category_name}</span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                          inc.magnitude_of_delay >= 3
+                            ? "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                            : inc.magnitude_of_delay === 2
+                            ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                            : "bg-blue-500/20 text-blue-300 border border-blue-500/30"
+                        }`}
+                      >
+                        {inc.magnitude_label}
+                      </span>
+                    </div>
+
+                    <p className="text-slate-300 text-[11px] leading-relaxed line-clamp-2">
+                      {inc.description}
+                    </p>
+
+                    {(inc.from_road || inc.to_road) && (
+                      <div className="flex items-center gap-1.5 text-[11px] text-slate-400 truncate pt-1 border-t border-slate-800/40">
+                        <MapPin className="w-3 h-3 text-slate-500 flex-shrink-0" />
+                        <span className="truncate">
+                          {inc.from_road} {inc.to_road ? `-> ${inc.to_road}` : ""}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 pt-1">
+                      <span>Delay: {Math.round(inc.delay_seconds / 60)} min</span>
+                      <span>Length: {Math.round(inc.length_meters)}m</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-6 text-center text-xs text-slate-500">
+                No active traffic disruptions or road closures detected in this area.
+              </div>
+            )}
           </div>
         </div>
       )}

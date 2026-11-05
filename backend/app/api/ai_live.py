@@ -7,15 +7,14 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 import redis
 
+from backend.app.core.database import get_db
+from backend.app.services.live_traffic_service import live_traffic_service
 from ml.prediction.predictor import (
     TrafficPredictor
-)
-
-from vision.streaming.redis_client import (
-    TrafficRedis
 )
 
 
@@ -24,8 +23,6 @@ router = APIRouter(
     tags=["AI Prediction", "AI Traffic"]
 )
 
-
-redis_client = TrafficRedis()
 
 predictor = None
 
@@ -42,23 +39,14 @@ def get_predictor():
 
 @router.get("/live-prediction")
 @router.get("/live-prediction/")
-def live_prediction():
+def live_prediction(db: Session = Depends(get_db)):
 
-    try:
-        traffic_data = (
-            redis_client.get_latest()
-        )
-    except (redis.exceptions.RedisError, ConnectionError) as redis_err:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Redis service unavailable: {str(redis_err)}"
-        )
+    traffic_data = live_traffic_service.get_latest_live_traffic(db=db)
 
-    if traffic_data is None:
-
+    if not traffic_data or traffic_data.get("status") == "UNAVAILABLE":
         raise HTTPException(
             status_code=404,
-            detail="No live traffic data available in Redis"
+            detail="No live traffic data available in Redis or database"
         )
 
     try:

@@ -43,6 +43,18 @@ function createDestinationIcon(label = "B"): L.DivIcon {
   });
 }
 
+// Invalidate map size on initial mount/layout stabilization to prevent gray/unrendered tiles
+const InvalidateSizeOnMount: React.FC = () => {
+  const map = useMap();
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [map]);
+  return null;
+};
+
 // Map bounds controller to auto-center when origin, destination or route change
 const AutoBoundsController: React.FC<{
   origin?: RouteCoordinates | null;
@@ -54,18 +66,30 @@ const AutoBoundsController: React.FC<{
   useEffect(() => {
     if (routeGeometry?.coordinates && routeGeometry.coordinates.length > 0) {
       // routeGeometry coordinates are [lng, lat]
-      const latlngs: [number, number][] = routeGeometry.coordinates.map((c) => [c[1], c[0]]);
-      const bounds = L.latLngBounds(latlngs);
-      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
-    } else if (origin && destination) {
+      const validCoords = routeGeometry.coordinates.filter(
+        (c) => Array.isArray(c) && c.length >= 2 && Number.isFinite(c[0]) && Number.isFinite(c[1])
+      );
+      if (validCoords.length > 0) {
+        const latlngs: [number, number][] = validCoords.map((c) => [c[1], c[0]]);
+        const bounds = L.latLngBounds(latlngs);
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+      }
+    } else if (
+      origin &&
+      destination &&
+      Number.isFinite(origin.lat) &&
+      Number.isFinite(origin.lng) &&
+      Number.isFinite(destination.lat) &&
+      Number.isFinite(destination.lng)
+    ) {
       const bounds = L.latLngBounds([
         [origin.lat, origin.lng],
         [destination.lat, destination.lng],
       ]);
       map.fitBounds(bounds, { padding: [60, 60], maxZoom: 15 });
-    } else if (origin) {
+    } else if (origin && Number.isFinite(origin.lat) && Number.isFinite(origin.lng)) {
       map.setView([origin.lat, origin.lng], 14);
-    } else if (destination) {
+    } else if (destination && Number.isFinite(destination.lat) && Number.isFinite(destination.lng)) {
       map.setView([destination.lat, destination.lng], 14);
     }
   }, [origin, destination, routeGeometry, map]);
@@ -97,7 +121,7 @@ interface RouteMapProps {
   intersections?: Intersection[];
   roads?: RoadSegment[];
   zones?: TrafficZone[];
-  onMapClick?: (lat: number, lng: number) => void;
+  onMapClick?: (lat: number, lng: number, name?: string, forceTarget?: "origin" | "destination") => void;
   clickMode?: "origin" | "destination" | null;
   className?: string;
 }
@@ -118,6 +142,8 @@ export const RouteMap: React.FC<RouteMapProps> = ({
   const [showRoads, setShowRoads] = React.useState(true);
   const [showIntersections, setShowIntersections] = React.useState(true);
   const [showZones, setShowZones] = React.useState(true);
+  const [showTomTomFlow, setShowTomTomFlow] = React.useState(false);
+  const [showTomTomIncidents, setShowTomTomIncidents] = React.useState(false);
 
   const defaultCenter: [number, number] = [13.0827, 80.2707];
 
@@ -210,6 +236,28 @@ export const RouteMap: React.FC<RouteMapProps> = ({
           <span>Zones ({parsedZones.length})</span>
           {showZones ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
         </button>
+
+        <button
+          type="button"
+          onClick={() => setShowTomTomFlow((prev) => !prev)}
+          className={`w-full flex items-center justify-between gap-2 px-1.5 py-0.5 rounded text-left transition-colors ${
+            showTomTomFlow ? "text-emerald-400 font-medium" : "text-slate-400"
+          }`}
+        >
+          <span>TomTom Flow</span>
+          {showTomTomFlow ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setShowTomTomIncidents((prev) => !prev)}
+          className={`w-full flex items-center justify-between gap-2 px-1.5 py-0.5 rounded text-left transition-colors ${
+            showTomTomIncidents ? "text-rose-400 font-medium" : "text-slate-400"
+          }`}
+        >
+          <span>TomTom Incidents</span>
+          {showTomTomIncidents ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+        </button>
       </div>
 
       {/* Map Legend */}
@@ -226,11 +274,12 @@ export const RouteMap: React.FC<RouteMapProps> = ({
       </div>
 
       <MapContainer
-        center={origin ? [origin.lat, origin.lng] : defaultCenter}
+        center={origin && Number.isFinite(origin.lat) && Number.isFinite(origin.lng) ? [origin.lat, origin.lng] : defaultCenter}
         zoom={14}
         scrollWheelZoom={true}
         className="w-full h-full z-10"
       >
+        <InvalidateSizeOnMount />
         <AutoBoundsController
           origin={origin}
           destination={destination}
@@ -239,10 +288,32 @@ export const RouteMap: React.FC<RouteMapProps> = ({
         <MapClickHandler onMapClick={onMapClick} clickMode={clickMode} />
 
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           maxZoom={19}
         />
+
+        {/* TomTom Live Flow Overlay Layer */}
+        {showTomTomFlow && (
+          <TileLayer
+            attribution='&copy; <a href="https://www.tomtom.com">TomTom</a>'
+            url={`${(import.meta.env.VITE_API_BASE_URL || "http://localhost:8001").replace(/\/+$/, "")}/live-traffic/tile/flow/{z}/{x}/{y}.png`}
+            opacity={0.65}
+            zIndex={15}
+            maxZoom={19}
+          />
+        )}
+
+        {/* TomTom Live Incidents Overlay Layer */}
+        {showTomTomIncidents && (
+          <TileLayer
+            attribution='&copy; <a href="https://www.tomtom.com">TomTom</a>'
+            url={`${(import.meta.env.VITE_API_BASE_URL || "http://localhost:8001").replace(/\/+$/, "")}/live-traffic/tile/incidents/{z}/{x}/{y}.png`}
+            opacity={0.8}
+            zIndex={16}
+            maxZoom={19}
+          />
+        )}
 
         {/* Traffic Zones Layer */}
         {showZones &&
@@ -313,11 +384,18 @@ export const RouteMap: React.FC<RouteMapProps> = ({
             <IntersectionMarker
               key={`int-${intersection.intersection_id}`}
               intersection={intersection}
+              onSelect={(int) => {
+                if (clickMode && onMapClick) {
+                  onMapClick(int.latitude, int.longitude, int.name, clickMode);
+                }
+              }}
+              onSetOrigin={() => onMapClick?.(intersection.latitude, intersection.longitude, intersection.name, "origin")}
+              onSetDestination={() => onMapClick?.(intersection.latitude, intersection.longitude, intersection.name, "destination")}
             />
           ))}
 
         {/* Origin Pin */}
-        {origin && (
+        {origin && Number.isFinite(origin.lat) && Number.isFinite(origin.lng) && (
           <Marker position={[origin.lat, origin.lng]} icon={createOriginIcon("A")}>
             <Popup>
               <div className="p-1 space-y-1 text-xs">
@@ -335,7 +413,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
         )}
 
         {/* Destination Pin */}
-        {destination && (
+        {destination && Number.isFinite(destination.lat) && Number.isFinite(destination.lng) && (
           <Marker position={[destination.lat, destination.lng]} icon={createDestinationIcon("B")}>
             <Popup>
               <div className="p-1 space-y-1 text-xs">

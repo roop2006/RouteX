@@ -14,6 +14,58 @@ export interface LiveTrafficData {
   intersection_id?: string;
   latitude?: number;
   longitude?: number;
+  status?: string;
+  source?: string;
+  message?: string;
+  free_flow_speed?: number;
+  delay_seconds?: number;
+  confidence?: number;
+  provider?: string;
+  frc?: string;
+  road_closure?: boolean;
+}
+
+export interface TrafficIncident {
+  id: string;
+  icon_category: number;
+  category_name: string;
+  magnitude_of_delay: number;
+  magnitude_label: string;
+  description: string;
+  delay_seconds: number;
+  length_meters: number;
+  from_road?: string;
+  to_road?: string;
+  start_time?: string;
+  end_time?: string;
+  centroid_lat?: number;
+  centroid_lng?: number;
+  source?: string;
+}
+
+export interface TomTomCitySnapshot {
+  status: string;
+  provider: string;
+  timestamp: string;
+  intersections_monitored: number;
+  average_speed: number;
+  average_density: number;
+  total_delay_seconds: number;
+  active_incidents_count: number;
+  junctions: Array<{
+    intersection_id?: string;
+    name?: string;
+    latitude: number;
+    longitude: number;
+    current_speed: number;
+    free_flow_speed: number;
+    delay_seconds: number;
+    congestion_level: string;
+    confidence: number;
+    frc: string;
+  }>;
+  incidents: TrafficIncident[];
+  message: string;
 }
 
 export interface TrafficEvent {

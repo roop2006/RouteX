@@ -31,6 +31,7 @@ class RouteAlternative(BaseModel):
     rank: int = 1
     is_recommended: bool = False
     recommendation_reason: Optional[str] = None
+    incidents_count: int = 0
 
 
 class CorridorRoadMatch(BaseModel):
@@ -63,6 +64,10 @@ class CorridorDetail(BaseModel):
     observed_density: Optional[float] = None
     observed_congestion: Optional[str] = None
     speed_limit_reference: Optional[float] = None
+    active_incidents_count: int = 0
+    incident_delay_seconds: float = 0.0
+    telemetry_source: Optional[str] = None
+    incidents_summary: list[str] = []
 
 
 class RouteAIExplanation(BaseModel):
@@ -87,6 +92,7 @@ class RouteAnalysisResponse(BaseModel):
     recommended_route_summary: Optional[str] = None
     recommendation_explanation: Optional[str] = None
     recommendation_basis: Optional[str] = None
+    traffic_provider: Optional[str] = "TomTom Traffic API"
 
 
 # --- Video Analysis Schemas ---
@@ -120,10 +126,10 @@ class VideoAnalysisResult(BaseModel):
     duration_seconds: float
     fps: float
     total_vehicles_detected: int
-    vehicle_types: dict[str, int]
-    lane_counts: dict[str, int]
-    direction_counts: dict[str, int]
-    line_crossing_counts: dict[str, int] = Field(default_factory=dict)
+    vehicle_types: dict[str, float | int]
+    lane_counts: dict[str, float | int]
+    direction_counts: dict[str, float | int]
+    line_crossing_counts: dict[str, float | int] = Field(default_factory=dict)
     line_crossing_total: int = 0
     average_speed: float
     density: float
@@ -131,6 +137,7 @@ class VideoAnalysisResult(BaseModel):
     anomaly_events: list[dict[str, Any]]
     frame_samples: list[FrameSample]
     preview_image_base64: Optional[str] = None
+    annotated_video_url: Optional[str] = None
     intersection_id: Optional[str] = None
     ai_prediction: Optional[dict[str, Any]] = None
     processed_at: datetime

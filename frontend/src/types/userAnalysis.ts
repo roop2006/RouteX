@@ -26,6 +26,10 @@ export interface RouteAlternative {
     coordinates: [number, number][]; // [lng, lat]
   };
   corridor_data_status: "LIVE_TELEMETRY" | "HISTORICAL_TELEMETRY" | "NO_TELEMETRY" | string;
+  rank?: number;
+  is_recommended?: boolean;
+  recommendation_reason?: string | null;
+  incidents_count?: number;
 }
 
 export interface CorridorRoadMatch {
@@ -58,6 +62,10 @@ export interface CorridorDetail {
   observed_density: number | null;
   observed_congestion: string | null;
   speed_limit_reference: number | null;
+  active_incidents_count?: number;
+  incident_delay_seconds?: number;
+  telemetry_source?: string | null;
+  incidents_summary?: string[];
 }
 
 export interface RouteAIExplanation {
@@ -79,6 +87,10 @@ export interface RouteAnalysisResponse {
   ai_prediction: RouteAIExplanation;
   analyzed_at: string;
   data_freshness_note: string;
+  recommended_route_summary?: string | null;
+  recommendation_explanation?: string | null;
+  recommendation_basis?: string | null;
+  traffic_provider?: string | null;
 }
 
 export interface FrameSample {
@@ -116,6 +128,7 @@ export interface VideoAnalysisResult {
   anomaly_events: Array<Record<string, unknown>>;
   frame_samples: FrameSample[];
   preview_image_base64: string | null;
+  annotated_video_url?: string | null;
   intersection_id?: string | null;
   ai_prediction?: {
     model_name?: string;

@@ -6,7 +6,7 @@ const baseURL = (
 
 export const apiClient = axios.create({
     baseURL,
-    timeout: 15000,
+    timeout: 30000,
     headers: {
         Accept: "application/json",
     },

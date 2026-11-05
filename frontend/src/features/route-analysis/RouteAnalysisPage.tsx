@@ -12,6 +12,7 @@ import {
   UploadCloud,
   FileVideo,
   Route as RouteIcon,
+  ShieldAlert,
 } from "lucide-react";
 import {
   BarChart,
@@ -76,9 +77,9 @@ export const RouteAnalysisPage: React.FC = () => {
   const [mapClickMode, setMapClickMode] = useState<"origin" | "destination" | null>(null);
   const [activeSearchTarget, setActiveSearchTarget] = useState<"origin" | "destination" | null>(null);
 
-  // Video Form State
+  // Video Form State - Defaults to Standalone camera (unassociated unless user chooses an intersection)
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [videoIntersectionId, setVideoIntersectionId] = useState("INT_001");
+  const [videoIntersectionId, setVideoIntersectionId] = useState("STANDALONE_CAMERA");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -106,27 +107,47 @@ export const RouteAnalysisPage: React.FC = () => {
 
   const { data: jobStatus } = useVideoAnalysisStatus(activeJobId);
 
-  // Derive video result directly from completed job or combined response
-  const videoResult = combinedResult?.video_analysis || (jobStatus?.status === "COMPLETED" ? jobStatus.result : null);
+  // Derive video result strictly isolated by active workflow mode to prevent stale cross-tab leaking
+  const videoResult =
+    activeTab === "integrated"
+      ? combinedResult?.video_analysis || (jobStatus?.status === "COMPLETED" ? jobStatus.result : null)
+      : jobStatus?.status === "COMPLETED"
+      ? jobStatus.result
+      : null;
 
   // Handle map clicks for pin placement
-  const handleMapClick = (lat: number, lng: number) => {
-    if (!mapClickMode) return;
+  const handleMapClick = (
+    lat: number,
+    lng: number,
+    customName?: string,
+    forceTarget?: "origin" | "destination"
+  ) => {
+    const targetMode = forceTarget || mapClickMode;
 
     const coords: RouteCoordinates = {
       lat: Number(lat.toFixed(5)),
       lng: Number(lng.toFixed(5)),
-      name: `Custom Point (${lat.toFixed(4)}, ${lng.toFixed(4)})`,
+      name: customName || `Custom Point (${lat.toFixed(4)}, ${lng.toFixed(4)})`,
     };
 
-    if (mapClickMode === "origin") {
+    if (targetMode === "origin") {
       setOriginCoords(coords);
       setOriginText(coords.name || "");
-    } else {
+      setMapClickMode(null);
+    } else if (targetMode === "destination") {
       setDestCoords(coords);
       setDestText(coords.name || "");
+      setMapClickMode(null);
+    } else {
+      // Direct click on map when no mode was explicitly selected:
+      if (!originCoords) {
+        setOriginCoords(coords);
+        setOriginText(coords.name || "");
+      } else {
+        setDestCoords(coords);
+        setDestText(coords.name || "");
+      }
     }
-    setMapClickMode(null);
   };
 
   const sameLocationSelected =
@@ -194,6 +215,8 @@ export const RouteAnalysisPage: React.FC = () => {
 
   const handleClearSelectedFile = () => {
     setSelectedFile(null);
+    setActiveJobId(null);
+    setCombinedResult(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -453,9 +476,17 @@ export const RouteAnalysisPage: React.FC = () => {
                       key={preset.name}
                       type="button"
                       onClick={() => {
-                        if (!originCoords) {
+                        if (activeSearchTarget === "origin") {
                           setOriginCoords(preset);
                           setOriginText(preset.name);
+                        } else if (activeSearchTarget === "destination") {
+                          setDestCoords(preset);
+                          setDestText(preset.name);
+                        } else if (!originCoords) {
+                          setOriginCoords(preset);
+                          setOriginText(preset.name);
+                        } else if (originCoords.name === preset.name) {
+                          // Already set as origin, keep it
                         } else {
                           setDestCoords(preset);
                           setDestText(preset.name);
@@ -565,6 +596,7 @@ export const RouteAnalysisPage: React.FC = () => {
                   onChange={(e) => setVideoIntersectionId(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
                 >
+                  <option value="STANDALONE_CAMERA">Standalone / no location metadata (Independent upload)</option>
                   <option value="INT_001">INT_001 - RouteX Test Intersection (Monitored)</option>
                   {intersections
                     .filter((i) => i.intersection_id !== "INT_001")
@@ -573,7 +605,6 @@ export const RouteAnalysisPage: React.FC = () => {
                         {i.intersection_id} - {i.name}
                       </option>
                     ))}
-                  <option value="STANDALONE_CAMERA">Standalone / no location metadata</option>
                 </select>
                 <p className="text-[10px] text-slate-500">
                   Combined analysis requires a real intersection on the selected corridor. Standalone recordings stay independent.
@@ -715,7 +746,7 @@ export const RouteAnalysisPage: React.FC = () => {
       {/* Results Section */}
       <div className="space-y-6 pt-4">
         {/* Combined Synthesis Banner */}
-        {combinedResult && (
+        {activeTab === "integrated" && combinedResult && (
           <div
             className={`p-5 rounded-xl border ${
               combinedResult.is_associated
@@ -755,220 +786,293 @@ export const RouteAnalysisPage: React.FC = () => {
         )}
 
         {/* Route Analysis Results */}
-        {routeResult && (
-          <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-sm space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-              <div>
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  <RouteIcon className="w-5 h-5 text-blue-400" />
-                  <span>Route Intelligence & Corridor Assessment</span>
-                </h3>
-                <span className="text-xs text-slate-400">{routeResult.data_freshness_note}</span>
-              </div>
-
-              {/* Congestion Badge */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400 font-medium">Corridor Status:</span>
-                <span
-                  className={`px-3 py-1 rounded-full text-xs font-bold ${getCongestionBadgeClass(
-                    routeResult.selected_route.congestion_level
-                  )}`}
-                >
-                  {routeResult.selected_route.congestion_level}
-                </span>
-              </div>
-            </div>
-
-            {/* Route KPI Metrics Strip */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60">
-                <span className="text-xs font-semibold text-slate-400 block">Distance</span>
-                <div className="text-2xl font-bold font-mono text-white mt-1">
-                  {routeResult.selected_route.distance_km} <span className="text-sm font-normal text-slate-400">km</span>
+        {(activeTab === "route" || activeTab === "integrated") && routeResult && (() => {
+          const currentDisplayRoute = activeAlternative || routeResult.selected_route;
+          return (
+            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-sm space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <RouteIcon className="w-5 h-5 text-blue-400" />
+                    <span>Route Intelligence & Corridor Assessment</span>
+                  </h3>
+                  <span className="text-xs text-slate-400">{routeResult.data_freshness_note}</span>
                 </div>
-                <span className="text-[11px] text-slate-400">{routeResult.selected_route.distance_meters} m</span>
-              </div>
 
-              <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60">
-                <span className="text-xs font-semibold text-slate-400 block">Free-Flow Time</span>
-                <div className="text-2xl font-bold font-mono text-white mt-1">
-                  {routeResult.selected_route.free_flow_duration_minutes} <span className="text-sm font-normal text-slate-400">min</span>
+                {/* Congestion Badge */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 font-medium">Corridor Status:</span>
+                  <span
+                    className={`px-3 py-1 rounded-full text-xs font-bold ${getCongestionBadgeClass(
+                      currentDisplayRoute.congestion_level
+                    )}`}
+                  >
+                    {currentDisplayRoute.congestion_level}
+                  </span>
                 </div>
-                <span className="text-[11px] text-slate-400">Base road geometry</span>
               </div>
 
-              <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60">
-                <span className="text-xs font-semibold text-slate-400 block">Traffic-Aware Time</span>
-                <div className="text-2xl font-bold font-mono text-white mt-1">
-                  {routeResult.selected_route.traffic_duration_minutes !== null ? (
-                    <>
-                      {routeResult.selected_route.traffic_duration_minutes} <span className="text-sm font-normal text-slate-400">min</span>
-                    </>
-                  ) : (
-                    <span className="text-slate-400 text-sm">No Telemetry</span>
-                  )}
+              {/* Route Recommendation Banner */}
+              {routeResult.recommendation_explanation && (
+                <div className="p-4 rounded-xl border border-blue-500/30 bg-blue-950/30 flex items-start gap-3 shadow-lg">
+                  <Sparkles className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-blue-400">
+                        Evidence-Based Recommendation
+                      </span>
+                      {routeResult.recommended_route_summary && (
+                        <span className="text-xs font-semibold text-white bg-blue-900/50 px-2 py-0.5 rounded border border-blue-700/50">
+                          {routeResult.recommended_route_summary}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-200">
+                      {routeResult.recommendation_explanation}
+                    </p>
+                    {routeResult.recommendation_basis && (
+                      <span className="text-[11px] text-slate-400 font-mono block">
+                        Evaluation basis: {routeResult.recommendation_basis}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <span className="text-[11px] text-slate-400">
-                  {routeResult.selected_route.delay_minutes
-                    ? `+${routeResult.selected_route.delay_minutes} min delay`
-                    : "No telemetry delay computed"}
-                </span>
-              </div>
+              )}
 
-              <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60">
-                <span className="text-xs font-semibold text-slate-400 block">Corridor Samples</span>
-                <div className="text-2xl font-bold font-mono text-white mt-1">
-                  {routeResult.corridor.telemetry_sample_count} <span className="text-sm font-normal text-slate-400">events</span>
+              {/* Corridor Incidents Alert Banner */}
+              {Boolean(routeResult.corridor.active_incidents_count && routeResult.corridor.active_incidents_count > 0) && (
+                <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-950/20 flex items-start gap-3">
+                  <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-rose-300">
+                        {routeResult.corridor.active_incidents_count} Live Incident(s) Detected Along Route Corridor
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded bg-rose-900/60 text-rose-200 text-[10px] font-mono">
+                        TomTom Traffic
+                      </span>
+                    </div>
+                    {routeResult.corridor.incident_delay_seconds ? (
+                      <span className="text-slate-300 block">
+                        Cumulative traffic delay: +{Math.round(routeResult.corridor.incident_delay_seconds / 60)} min
+                      </span>
+                    ) : null}
+                    {routeResult.corridor.incidents_summary && routeResult.corridor.incidents_summary.length > 0 && (
+                      <ul className="list-disc list-inside text-slate-300 pt-1 space-y-0.5">
+                        {routeResult.corridor.incidents_summary.map((summary, idx) => (
+                          <li key={idx}>{summary}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 </div>
-                <span className="text-[11px] text-emerald-400 font-mono">
-                  {routeResult.corridor.telemetry_status === "AVAILABLE" ? "Live PostGIS stream" : "Sensor unavailable"}
-                </span>
-              </div>
-            </div>
+              )}
 
-            {/* Alternatives Route Selector Strip */}
-            {routeResult.alternatives.length > 1 && (
-              <div className="space-y-2">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 block">
-                  Available Route Options ({routeResult.alternatives.length})
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                  {routeResult.alternatives.map((alt, index) => {
-                    const isSelected = (activeAlternative?.summary || routeResult.selected_route.summary) === alt.summary;
-                    return (
-                      <button
-                        key={`alt-card-${index}`}
-                        type="button"
-                        onClick={() => setActiveAlternative(alt)}
-                        className={`p-3 rounded-lg border text-left transition-all ${
-                          isSelected
-                            ? "border-blue-500 bg-blue-950/20 shadow-md shadow-blue-500/10"
-                            : "border-slate-800 bg-slate-950/40 hover:border-slate-700"
+              {/* Route KPI Metrics Strip */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60">
+                  <span className="text-xs font-semibold text-slate-400 block">Distance</span>
+                  <div className="text-2xl font-bold font-mono text-white mt-1">
+                    {currentDisplayRoute.distance_km} <span className="text-sm font-normal text-slate-400">km</span>
+                  </div>
+                  <span className="text-[11px] text-slate-400">{currentDisplayRoute.distance_meters} m</span>
+                </div>
+
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60">
+                  <span className="text-xs font-semibold text-slate-400 block">Free-Flow Time</span>
+                  <div className="text-2xl font-bold font-mono text-white mt-1">
+                    {currentDisplayRoute.free_flow_duration_minutes} <span className="text-sm font-normal text-slate-400">min</span>
+                  </div>
+                  <span className="text-[11px] text-slate-400">Base road geometry</span>
+                </div>
+
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60">
+                  <span className="text-xs font-semibold text-slate-400 block">Traffic-Aware Time</span>
+                  <div className="text-2xl font-bold font-mono text-white mt-1">
+                    {currentDisplayRoute.traffic_duration_minutes !== null ? (
+                      <>
+                        {currentDisplayRoute.traffic_duration_minutes} <span className="text-sm font-normal text-slate-400">min</span>
+                      </>
+                    ) : (
+                      <span className="text-slate-400 text-sm">No Telemetry</span>
+                    )}
+                  </div>
+                  <span className="text-[11px] text-slate-400">
+                    {currentDisplayRoute.delay_minutes
+                      ? `+${currentDisplayRoute.delay_minutes} min delay`
+                      : "No telemetry delay computed"}
+                  </span>
+                </div>
+
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60">
+                  <span className="text-xs font-semibold text-slate-400 block">Corridor Samples</span>
+                  <div className="text-2xl font-bold font-mono text-white mt-1">
+                    {routeResult.corridor.telemetry_sample_count} <span className="text-sm font-normal text-slate-400">events</span>
+                  </div>
+                  <span className="text-[11px] text-emerald-400 font-mono">
+                    {routeResult.corridor.telemetry_status === "AVAILABLE"
+                      ? (routeResult.corridor.telemetry_source || "Live PostGIS stream")
+                      : "Sensor unavailable"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Alternatives Route Selector Strip */}
+              {routeResult.alternatives.length > 1 && (
+                <div className="space-y-2">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 block">
+                    Available Route Options ({routeResult.alternatives.length})
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {routeResult.alternatives.map((alt, index) => {
+                      const isSelected = (activeAlternative?.summary || routeResult.selected_route.summary) === alt.summary;
+                      return (
+                        <button
+                          key={`alt-card-${index}`}
+                          type="button"
+                          onClick={() => setActiveAlternative(alt)}
+                          className={`p-3 rounded-lg border text-left transition-all ${
+                            isSelected
+                              ? "border-blue-500 bg-blue-950/20 shadow-md shadow-blue-500/10"
+                              : "border-slate-800 bg-slate-950/40 hover:border-slate-700"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between text-xs font-bold text-white">
+                            <span className="truncate mr-2">{alt.summary || `Route Alternative ${index + 1}`}</span>
+                            {alt.is_recommended ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold shrink-0">
+                                Recommended
+                              </span>
+                            ) : alt.rank ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-medium shrink-0">
+                                Rank {alt.rank}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="flex items-center justify-between text-xs text-slate-300 mt-1">
+                            <span>{alt.distance_km} km • {alt.traffic_duration_minutes ?? alt.free_flow_duration_minutes} min</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${getCongestionBadgeClass(alt.congestion_level)}`}>
+                              {alt.congestion_level}
+                            </span>
+                          </div>
+                          {alt.recommendation_reason && (
+                            <div className="text-[10px] text-slate-400 mt-1 truncate">
+                              {alt.recommendation_reason}
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Corridor Infrastructure & AI Forecast Dual Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                {/* Corridor Assets Breakdown */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Monitored Road Corridors & Intersections</span>
+                  </h4>
+
+                  <div className="space-y-2">
+                    {routeResult.corridor.matched_roads.length > 0 ? (
+                      routeResult.corridor.matched_roads.map((road) => (
+                        <div
+                          key={road.road_id}
+                          className="p-3 rounded-lg border border-slate-800/80 bg-slate-950/40 flex items-center justify-between text-xs"
+                        >
+                          <div>
+                            <span className="font-semibold text-white">{road.road_name}</span>
+                            <span className="block text-[10px] text-slate-400 font-mono">
+                              {road.road_id} • {road.lanes} lanes
+                            </span>
+                          </div>
+                          <span className="font-mono font-bold text-blue-400">{road.speed_limit} km/h</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="p-3 rounded-lg border border-slate-800 bg-slate-950/30 text-xs text-slate-400">
+                        No registered RouteX road segments intersecting this route corridor.
+                      </div>
+                    )}
+
+                    {routeResult.corridor.nearby_intersections.map((inter) => (
+                      <div
+                        key={inter.intersection_id}
+                        className="p-2.5 rounded-lg border border-indigo-900/40 bg-indigo-950/20 flex items-center justify-between text-xs"
+                      >
+                        <span className="text-indigo-300 font-medium">{inter.name}</span>
+                        <span className="font-mono text-[10px] text-slate-400">{inter.intersection_id}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* AI Prediction Model Output Card */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                    <span>RouteX AI Model Forecast</span>
+                  </h4>
+
+                  <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-white">Production Predictor</span>
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          routeResult.ai_prediction.status === "AVAILABLE"
+                            ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                            : "bg-slate-800 text-slate-400"
                         }`}
                       >
-                        <div className="flex items-center justify-between text-xs font-bold text-white">
-                          <span>{alt.summary || `Route Alternative ${index + 1}`}</span>
-                          {index === 0 && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400">
-                              Primary
+                        {routeResult.ai_prediction.status}
+                      </span>
+                    </div>
+
+                    {routeResult.ai_prediction.status === "AVAILABLE" ? (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="bg-slate-900 p-2.5 rounded-lg">
+                            <span className="text-slate-400 text-[10px] block">Predicted Congestion</span>
+                            <span
+                              className={`font-bold mt-0.5 inline-block px-1.5 py-0.5 rounded text-xs ${getCongestionBadgeClass(
+                                routeResult.ai_prediction.predicted_congestion || "LOW"
+                              )}`}
+                            >
+                              {routeResult.ai_prediction.predicted_congestion}
                             </span>
-                          )}
+                          </div>
+                          <div className="bg-slate-900 p-2.5 rounded-lg">
+                            <span className="text-slate-400 text-[10px] block">Prediction Confidence</span>
+                            <span className="font-mono font-bold text-white text-sm">
+                              {routeResult.ai_prediction.prediction_confidence != null
+                                ? `${(routeResult.ai_prediction.prediction_confidence * 100).toFixed(1)}%`
+                                : "Unavailable"}
+                            </span>
+                          </div>
                         </div>
-                        <div className="text-xs text-slate-300 mt-1">
-                          {alt.distance_km} km • {alt.free_flow_duration_minutes} min
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
 
-            {/* Corridor Infrastructure & AI Forecast Dual Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-              {/* Corridor Assets Breakdown */}
-              <div className="space-y-3">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Monitored Road Corridors & Intersections</span>
-                </h4>
-
-                <div className="space-y-2">
-                  {routeResult.corridor.matched_roads.length > 0 ? (
-                    routeResult.corridor.matched_roads.map((road) => (
-                      <div
-                        key={road.road_id}
-                        className="p-3 rounded-lg border border-slate-800/80 bg-slate-950/40 flex items-center justify-between text-xs"
-                      >
-                        <div>
-                          <span className="font-semibold text-white">{road.road_name}</span>
-                          <span className="block text-[10px] text-slate-400 font-mono">
-                            {road.road_id} • {road.lanes} lanes
-                          </span>
-                        </div>
-                        <span className="font-mono font-bold text-blue-400">{road.speed_limit} km/h</span>
+                        <p className="text-xs text-slate-300 font-mono bg-slate-900/80 p-2.5 rounded-lg">
+                          {routeResult.ai_prediction.explanation}
+                        </p>
                       </div>
-                    ))
-                  ) : (
-                    <div className="p-3 rounded-lg border border-slate-800 bg-slate-950/30 text-xs text-slate-400">
-                      No registered RouteX road segments intersecting this route corridor.
-                    </div>
-                  )}
-
-                  {routeResult.corridor.nearby_intersections.map((inter) => (
-                    <div
-                      key={inter.intersection_id}
-                      className="p-2.5 rounded-lg border border-indigo-900/40 bg-indigo-950/20 flex items-center justify-between text-xs"
-                    >
-                      <span className="text-indigo-300 font-medium">{inter.name}</span>
-                      <span className="font-mono text-[10px] text-slate-400">{inter.intersection_id}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* AI Prediction Model Output Card */}
-              <div className="space-y-3">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                  <span>RouteX AI Model Forecast</span>
-                </h4>
-
-                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-white">Production Predictor</span>
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        routeResult.ai_prediction.status === "AVAILABLE"
-                          ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
-                          : "bg-slate-800 text-slate-400"
-                      }`}
-                    >
-                      {routeResult.ai_prediction.status}
-                    </span>
+                    ) : (
+                      <div className="p-3 rounded-lg bg-slate-900/50 text-xs text-slate-400 space-y-1">
+                        <span className="font-semibold text-slate-300 block">Insufficient Corridor Data</span>
+                        <p>{routeResult.ai_prediction.explanation}</p>
+                      </div>
+                    )}
                   </div>
-
-                  {routeResult.ai_prediction.status === "AVAILABLE" ? (
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div className="bg-slate-900 p-2.5 rounded-lg">
-                          <span className="text-slate-400 text-[10px] block">Predicted Congestion</span>
-                          <span
-                            className={`font-bold mt-0.5 inline-block px-1.5 py-0.5 rounded text-xs ${getCongestionBadgeClass(
-                              routeResult.ai_prediction.predicted_congestion || "LOW"
-                            )}`}
-                          >
-                            {routeResult.ai_prediction.predicted_congestion}
-                          </span>
-                        </div>
-                        <div className="bg-slate-900 p-2.5 rounded-lg">
-                          <span className="text-slate-400 text-[10px] block">Prediction Confidence</span>
-                          <span className="font-mono font-bold text-white text-sm">
-                            {routeResult.ai_prediction.prediction_confidence != null
-                              ? `${(routeResult.ai_prediction.prediction_confidence * 100).toFixed(1)}%`
-                              : "Unavailable"}
-                          </span>
-                        </div>
-                      </div>
-
-                      <p className="text-xs text-slate-300 font-mono bg-slate-900/80 p-2.5 rounded-lg">
-                        {routeResult.ai_prediction.explanation}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="p-3 rounded-lg bg-slate-900/50 text-xs text-slate-400 space-y-1">
-                      <span className="font-semibold text-slate-300 block">Insufficient Corridor Data</span>
-                      <p>{routeResult.ai_prediction.explanation}</p>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Video Analysis Results */}
-        {videoResult && (
+        {(activeTab === "video" || activeTab === "integrated") && videoResult && (
           <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-sm space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
               <div>
@@ -1117,8 +1221,30 @@ export const RouteAnalysisPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Visual Verification Thumbnail Preview */}
-            {videoResult.preview_image_base64 && (
+            {/* Visual Verification & Annotated Video Playback */}
+            {videoResult.annotated_video_url ? (
+              <div className="p-4 rounded-xl border border-indigo-500/30 bg-slate-950/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-2">
+                    <Video className="w-4 h-4 text-indigo-400" />
+                    <span>Processed & Annotated Traffic Video (Full Tracking Playback)</span>
+                  </span>
+                  <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30">
+                    AI Annotations Active
+                  </span>
+                </div>
+                <div className="rounded-lg overflow-hidden border border-slate-800 bg-black flex items-center justify-center">
+                  <video
+                    controls
+                    playsInline
+                    src={videoResult.annotated_video_url}
+                    className="w-full max-h-96 object-contain"
+                  >
+                    Your browser does not support HTML5 video playback.
+                  </video>
+                </div>
+              </div>
+            ) : videoResult.preview_image_base64 ? (
               <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60 space-y-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
                   Computer Vision Detection Sample (Annotated Frame)
@@ -1131,7 +1257,7 @@ export const RouteAnalysisPage: React.FC = () => {
                   />
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
         )}
       </div>

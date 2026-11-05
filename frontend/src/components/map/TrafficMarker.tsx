@@ -102,9 +102,16 @@ export const TrafficEventMarker: React.FC<EventMarkerProps> = ({ event, onSelect
 interface IntersectionMarkerProps {
   intersection: Intersection;
   onSelect?: (intersection: Intersection) => void;
+  onSetOrigin?: (intersection: Intersection) => void;
+  onSetDestination?: (intersection: Intersection) => void;
 }
 
-export const IntersectionMarker: React.FC<IntersectionMarkerProps> = ({ intersection, onSelect }) => {
+export const IntersectionMarker: React.FC<IntersectionMarkerProps> = ({
+  intersection,
+  onSelect,
+  onSetOrigin,
+  onSetDestination,
+}) => {
   if (isNaN(intersection.latitude) || isNaN(intersection.longitude)) return null;
 
   return (
@@ -126,6 +133,28 @@ export const IntersectionMarker: React.FC<IntersectionMarkerProps> = ({ intersec
           <div className="text-slate-400 text-[10px] font-mono">
             Lat: {intersection.latitude.toFixed(4)}, Lng: {intersection.longitude.toFixed(4)}
           </div>
+          {(onSetOrigin || onSetDestination) && (
+            <div className="flex items-center gap-1.5 pt-1 border-t border-slate-700/60">
+              {onSetOrigin && (
+                <button
+                  type="button"
+                  onClick={() => onSetOrigin(intersection)}
+                  className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-semibold transition-colors"
+                >
+                  Set Origin
+                </button>
+              )}
+              {onSetDestination && (
+                <button
+                  type="button"
+                  onClick={() => onSetDestination(intersection)}
+                  className="px-2 py-0.5 bg-rose-600 hover:bg-rose-500 text-white rounded text-[10px] font-semibold transition-colors"
+                >
+                  Set Destination
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </Popup>
     </Marker>

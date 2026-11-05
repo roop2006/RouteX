@@ -1,5 +1,5 @@
 import { apiClient } from "./client";
-import type { LiveTrafficData, TrafficEvent } from "../types/traffic";
+import type { LiveTrafficData, TrafficEvent, TrafficIncident, TomTomCitySnapshot } from "../types/traffic";
 import type { LivePredictionResponse } from "../types/prediction";
 
 export async function getLiveTraffic(): Promise<LiveTrafficData> {
@@ -9,6 +9,23 @@ export async function getLiveTraffic(): Promise<LiveTrafficData> {
 
 export async function getLivePrediction(): Promise<LivePredictionResponse> {
   const response = await apiClient.get<LivePredictionResponse>("/ai/live-prediction");
+  return response.data;
+}
+
+export interface IncidentsResponse {
+  status: string;
+  provider: string;
+  count: number;
+  incidents: TrafficIncident[];
+}
+
+export async function getLiveIncidents(): Promise<IncidentsResponse> {
+  const response = await apiClient.get<IncidentsResponse>("/live-traffic/incidents");
+  return response.data;
+}
+
+export async function getTomTomOverview(): Promise<TomTomCitySnapshot> {
+  const response = await apiClient.get<TomTomCitySnapshot>("/live-traffic/tomtom");
   return response.data;
 }
 

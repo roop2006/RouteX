@@ -1,5 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { getLiveTraffic, getLivePrediction, getTrafficEvents, type TrafficEventsParams } from "../api/liveTraffic";
+import {
+  getLiveTraffic,
+  getLivePrediction,
+  getTrafficEvents,
+  getLiveIncidents,
+  getTomTomOverview,
+  type TrafficEventsParams,
+} from "../api/liveTraffic";
 
 export function useLiveTraffic(options?: { pollingEnabled?: boolean }) {
   const pollingEnabled = options?.pollingEnabled ?? true;
@@ -8,6 +15,30 @@ export function useLiveTraffic(options?: { pollingEnabled?: boolean }) {
     queryFn: getLiveTraffic,
     refetchInterval: pollingEnabled ? 5000 : false,
     refetchIntervalInBackground: false,
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useLiveIncidents() {
+  return useQuery({
+    queryKey: ["live-incidents"],
+    queryFn: getLiveIncidents,
+    refetchInterval: 30000,
+    refetchIntervalInBackground: false,
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useTomTomOverview() {
+  return useQuery({
+    queryKey: ["tomtom-overview"],
+    queryFn: getTomTomOverview,
+    refetchInterval: 30000,
+    refetchIntervalInBackground: false,
+    retry: 1,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -17,6 +48,8 @@ export function useLivePrediction() {
     queryFn: getLivePrediction,
     refetchInterval: 5000,
     refetchIntervalInBackground: false,
+    retry: 1,
+    refetchOnWindowFocus: false,
   });
 }
 

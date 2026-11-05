@@ -13,6 +13,9 @@ import cv2
 from fastapi import HTTPException, UploadFile
 
 from backend.app.core.database import SessionLocal
+from backend.app.core.geo_config import POSTGIS_SRID
+from backend.app.models.intersection import Intersection
+from backend.app.models.traffic_stream_event import TrafficStreamEvent
 from backend.app.schemas.user_analysis import (
     FrameSample,
     VideoAnalysisJobResponse,
@@ -22,6 +25,7 @@ from backend.app.schemas.user_analysis import (
 from backend.app.services.prediction_history_service import record_prediction
 from ml.prediction.predictor import TrafficPredictor
 from vision.processing.anomaly_detector import AnomalyDetector
+from vision.processing.congestion import calculate_density, classify_congestion
 from vision.processing.direction_detector import DirectionDetector
 from vision.processing.event_builder import build_events
 from vision.processing.lane_detector import LaneDetector
@@ -290,6 +294,17 @@ def _process_video_worker(job_id: str, file_path: str, intersection_id: Optional
         )
         direction_detector = DirectionDetector()
 
+        # Initialize VideoWriter for saving the fully processed and annotated video
+        annotated_filename = f"annotated_{job_id}.mp4"
+        annotated_path = UPLOAD_DIR / annotated_filename
+        writer = None
+        try:
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out_fps = fps if fps > 0 else 25.0
+            writer = cv2.VideoWriter(str(annotated_path), fourcc, out_fps, (width, height))
+        except Exception as w_err:
+            writer = None
+
         frame_idx = 0
         processed_count = 0
         start_time = time.time()
@@ -308,6 +323,8 @@ def _process_video_worker(job_id: str, file_path: str, intersection_id: Optional
             with _jobs_lock:
                 if _jobs[job_id].get("cancel_requested", False):
                     cap.release()
+                    if writer is not None and writer.isOpened():
+                        writer.release()
                     return
 
             ret, frame = cap.read()
@@ -350,8 +367,16 @@ def _process_video_worker(job_id: str, file_path: str, intersection_id: Optional
                 anomaly_events.extend(current_events)
 
             # 7. Traffic intelligence analysis
+            # Compute instantaneous intelligence from active vehicles currently occupying this frame
+            curr_vehicle_count = len(tracks)
+            instantaneous_traffic_data = {
+                "tracks": tracks,
+                "total_vehicles": curr_vehicle_count,
+                "vehicle_types": traffic_data["vehicle_types"],
+                "lane_counts": lane_counts,
+            }
             latest_intelligence = traffic_intelligence.analyze(
-                traffic_data,
+                instantaneous_traffic_data,
                 average_speed=current_avg_speed,
                 anomaly_events=current_events,
             )
@@ -359,14 +384,26 @@ def _process_video_worker(job_id: str, file_path: str, intersection_id: Optional
             # 8. Virtual line counter
             line_counter.update(tracks)
 
+            # 9. Render annotations on frame and write to annotated video
+            annotated_frame = tracking_result.plot()
+            cv2.putText(
+                annotated_frame,
+                f"RouteX AI Vision | Active Vehicles: {curr_vehicle_count} | Velocity: {round(current_avg_speed, 1)} km/h",
+                (20, 35),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.75,
+                (0, 255, 0),
+                2,
+            )
+            if writer is not None and writer.isOpened():
+                writer.write(annotated_frame)
+
             # Capture annotated thumbnail preview of frame with high activity
-            curr_vehicle_count = len(tracks)
             if curr_vehicle_count > max_vehicles_seen or preview_image_b64 is None:
                 max_vehicles_seen = curr_vehicle_count
                 try:
-                    annotated = tracking_result.plot()
                     # Resize thumbnail to save memory
-                    thumb = cv2.resize(annotated, (640, int(640 * height / width)))
+                    thumb = cv2.resize(annotated_frame, (640, int(640 * height / width)))
                     _, buffer = cv2.imencode(".jpg", thumb, [cv2.IMWRITE_JPEG_QUALITY, 75])
                     preview_image_b64 = f"data:image/jpeg;base64,{base64.b64encode(buffer).decode('utf-8')}"
                 except Exception:
@@ -396,6 +433,8 @@ def _process_video_worker(job_id: str, file_path: str, intersection_id: Optional
                     _jobs[job_id]["current_fps"] = round(current_fps, 1)
 
         cap.release()
+        if writer is not None and writer.isOpened():
+            writer.release()
 
         with _jobs_lock:
             if _jobs[job_id].get("cancel_requested", False):
@@ -407,8 +446,11 @@ def _process_video_worker(job_id: str, file_path: str, intersection_id: Optional
         line_crossing_counts = line_counter.get_type_counts()
         line_crossing_total = len(line_counter.counted_ids)
         final_speed = speed_estimator.get_average_speed()
-        final_density = latest_intelligence.get("density", 0.0)
-        final_congestion = latest_intelligence.get("congestion_level", "LOW")
+        if frame_samples:
+            final_density = round(sum(s.density for s in frame_samples) / len(frame_samples), 2)
+        else:
+            final_density = round(calculate_density(len(tracks) if 'tracks' in locals() else 0), 2)
+        final_congestion = classify_congestion(final_density, final_speed)
 
         direction_counts = {
             "toward_camera": sum(1 for d in latest_directions.values() if d == "toward_camera"),
@@ -439,7 +481,7 @@ def _process_video_worker(job_id: str, file_path: str, intersection_id: Optional
                 "forecast_horizon": "next_observation_step",
             }
 
-            # Persist only when the video is explicitly tied to a real intersection
+            # Persist observation only when the video is explicitly tied to a real intersection
             associated_intersection = (intersection_id or "").strip()
             if associated_intersection and associated_intersection not in {"STANDALONE_CAMERA"}:
                 try:
@@ -458,6 +500,38 @@ def _process_video_worker(job_id: str, file_path: str, intersection_id: Optional
                             input_features=ai_input,
                             prediction_timestamp=now,
                         )
+
+                        # Look up intersection to extract genuine coordinates and store observation in PostGIS
+                        inter = (
+                            db.query(Intersection)
+                            .filter(Intersection.intersection_id == associated_intersection)
+                            .first()
+                        )
+                        if inter:
+                            loc_point = WKTElement(f"POINT({inter.longitude} {inter.latitude})", srid=POSTGIS_SRID)
+                            video_event = TrafficStreamEvent(
+                                total_vehicles=total_unique_vehicles,
+                                vehicle_types=vehicle_types,
+                                lane_counts=latest_lane_counts,
+                                direction_counts=direction_counts,
+                                average_speed=round(final_speed, 1),
+                                density=round(final_density, 3),
+                                congestion_level=final_congestion,
+                                events=[{
+                                    "source": "video_analysis",
+                                    "job_id": job_id,
+                                    "filename": _jobs[job_id]["filename"],
+                                    "duration_seconds": round(duration_seconds, 2),
+                                    "processed_at": now.isoformat(),
+                                }],
+                                intersection_id=associated_intersection,
+                                latitude=inter.latitude,
+                                longitude=inter.longitude,
+                                location=loc_point,
+                                timestamp=now,
+                            )
+                            db.add(video_event)
+                            db.commit()
                     finally:
                         db.close()
                 except Exception:
@@ -467,6 +541,17 @@ def _process_video_worker(job_id: str, file_path: str, intersection_id: Optional
                 "status": "PREDICTION_SKIPPED",
                 "reason": f"AI model inference error: {str(pred_err)}",
             }
+
+        # Check if annotated video file was generated
+        annotated_url = (
+            f"/analysis/video/{job_id}/stream"
+            if annotated_path.exists() and annotated_path.stat().st_size > 0
+            else None
+        )
+
+        with _jobs_lock:
+            _jobs[job_id]["annotated_video_path"] = str(annotated_path) if annotated_url else None
+            _jobs[job_id]["annotated_video_url"] = annotated_url
 
         # Build final completed result object
         result = VideoAnalysisResult(
@@ -488,6 +573,7 @@ def _process_video_worker(job_id: str, file_path: str, intersection_id: Optional
             anomaly_events=anomaly_events,
             frame_samples=frame_samples,
             preview_image_base64=preview_image_b64,
+            annotated_video_url=annotated_url,
             intersection_id=intersection_id,
             ai_prediction=ai_prediction_result,
             processed_at=datetime.now(),
@@ -504,9 +590,19 @@ def _process_video_worker(job_id: str, file_path: str, intersection_id: Optional
     except Exception as exc:
         if cap.isOpened():
             cap.release()
+        if writer is not None and writer.isOpened():
+            writer.release()
         with _jobs_lock:
             _jobs[job_id]["status"] = "FAILED"
             _jobs[job_id]["error"] = f"Pipeline processing exception: {str(exc)}"
+
+
+def get_annotated_video_path(job_id: str) -> Optional[str]:
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if not job:
+            return None
+        return job.get("annotated_video_path")
 
 
 def get_video_job_status(job_id: str) -> VideoAnalysisStatusResponse:

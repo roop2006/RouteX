@@ -9,7 +9,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .core.database import Base, engine
+from .core.database import Base, engine, SessionLocal
 from .models.traffic_event import TrafficEvent
 from .models.traffic_stream_event import TrafficStreamEvent
 from .models.intersection import Intersection
@@ -26,7 +26,21 @@ from .api.prediction import router as prediction_router
 from .api.ai_live import router as ai_live_router
 from .api.user_analysis import router as user_analysis_router
 
+from .services.road_network_service import ensure_arterial_network
+from .services.traffic_ingestion_service import seed_corridor_historical_observations
+
 Base.metadata.create_all(bind=engine)
+
+# Ensure arterial road network and verified baseline corridor observations are initialized
+try:
+    _init_db = SessionLocal()
+    try:
+        ensure_arterial_network(_init_db)
+        seed_corridor_historical_observations(_init_db)
+    finally:
+        _init_db.close()
+except Exception:
+    pass
 
 app = FastAPI(title="RouteX API")
 

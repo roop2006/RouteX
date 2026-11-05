@@ -383,3 +383,65 @@ def test_combined_analysis_standalone_camera_no_location(client):
     assert data["route_analysis"] is not None
     assert data["video_analysis"] is not None
 
+
+def test_route_analysis_recommendation_and_ranking(client):
+    """
+    Verify route analysis calculates road-following geometry, ranks routes,
+    flags the recommended alternative with rank 1, and provides explainable recommendation text.
+    """
+    payload = {
+        "origin": {"lat": 13.0827, "lng": 80.2707, "name": "INT_001"},
+        "destination": {"lat": 13.0824, "lng": 80.2755, "name": "Chennai Central"},
+        "include_alternatives": True,
+    }
+
+    res = client.post("/analysis/route", json=payload)
+    assert res.status_code == 200
+    data = res.json()
+
+    assert "selected_route" in data
+    assert "alternatives" in data
+    assert len(data["alternatives"]) >= 1
+
+    selected = data["selected_route"]
+    assert selected["rank"] == 1
+    assert selected["is_recommended"] is True
+    assert selected["recommendation_reason"] is not None
+    assert selected["geometry"]["type"] == "LineString"
+    assert len(selected["geometry"]["coordinates"]) >= 2
+
+    # Verify recommendation fields on top-level response
+    assert data["recommended_route_summary"] is not None
+    assert data["recommendation_explanation"] is not None
+    assert data["recommendation_basis"] is not None
+
+    # Verify all alternatives have ranking and road-following geometry
+    for idx, alt in enumerate(data["alternatives"]):
+        assert alt["rank"] == idx + 1
+        assert alt["geometry"]["type"] == "LineString"
+        assert len(alt["geometry"]["coordinates"]) >= 2
+        assert alt["distance_meters"] > 0
+        assert alt["free_flow_duration_seconds"] > 0
+
+
+def test_video_density_and_congestion_metric_accuracy():
+    """
+    Verify density and congestion classification accuracy.
+    Instantaneous density must reflect current occupancy (vehicles / capacity)
+    and not saturate artificially from cumulative counts.
+    """
+    from vision.processing.congestion import calculate_density, classify_congestion
+
+    # Test density with 6 vehicles on a 3-lane road (capacity = 30)
+    density_low = calculate_density(vehicle_count=6, lane_count=3, vehicles_per_lane=10)
+    assert round(density_low, 2) == 0.20
+    congestion_low = classify_congestion(density=density_low, average_speed=40.0)
+    assert congestion_low == "LOW"
+
+    # Test density with 25 vehicles (near capacity) at low speed (10 km/h) -> HIGH congestion
+    density_high = calculate_density(vehicle_count=25, lane_count=3, vehicles_per_lane=10)
+    assert round(density_high, 2) == 0.83
+    congestion_high = classify_congestion(density=density_high, average_speed=10.0)
+    assert congestion_high == "HIGH"
+
+

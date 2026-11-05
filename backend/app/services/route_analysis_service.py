@@ -21,6 +21,7 @@ from backend.app.schemas.user_analysis import (
     RouteAnalysisResponse,
     RouteCoordinates,
 )
+from backend.app.services.tomtom_traffic_service import tomtom_traffic_service
 from ml.prediction.predictor import TrafficPredictor
 
 logger = logging.getLogger("routex.route_analysis")
@@ -122,6 +123,50 @@ def fetch_osrm_route(
     except Exception as exc:
         logger.warning(f"OSRM routing query failed: {exc}")
 
+    return {}
+
+
+def fetch_tomtom_route(
+    origin_lng: float,
+    origin_lat: float,
+    dest_lng: float,
+    dest_lat: float,
+) -> dict[str, Any]:
+    """
+    Fallback road routing using TomTom Routing API when OSRM is unreachable or times out.
+    """
+    if not tomtom_traffic_service.is_configured:
+        return {}
+    try:
+        url = (
+            f"https://api.tomtom.com/routing/1/calculateRoute/"
+            f"{origin_lat},{origin_lng}:{dest_lat},{dest_lng}/json"
+            f"?key={tomtom_traffic_service.api_key}&computeTravelTimeFor=all&traffic=true"
+        )
+        resp = tomtom_traffic_service.session.get(url, timeout=6)
+        if resp.status_code == 200:
+            data = resp.json()
+            routes = data.get("routes", [])
+            if routes:
+                r = routes[0]
+                summary = r.get("summary", {})
+                legs = r.get("legs", [])
+                points = legs[0].get("points", []) if legs else []
+                if points:
+                    coords = [[p["longitude"], p["latitude"]] for p in points]
+                    return {
+                        "code": "Ok",
+                        "routes": [
+                            {
+                                "distance": float(summary.get("lengthInMeters", 0.0)),
+                                "duration": float(summary.get("travelTimeInSeconds", 0.0)),
+                                "geometry": {"type": "LineString", "coordinates": coords},
+                                "legs": [{"summary": "TomTom Verified Road Corridor"}],
+                            }
+                        ],
+                    }
+    except Exception as exc:
+        logger.warning(f"TomTom routing fallback failed: {exc}")
     return {}
 
 
@@ -303,7 +348,8 @@ def evaluate_corridor_telemetry(
             average_speed,
             density,
             congestion_level,
-            timestamp
+            timestamp,
+            events
         FROM traffic_stream_events
         WHERE location IS NOT NULL
         AND ST_DWithin(
@@ -325,14 +371,53 @@ def evaluate_corridor_telemetry(
     observed_avg_speed: Optional[float] = None
     observed_density: Optional[float] = None
     observed_congestion: Optional[str] = None
+    active_incidents = 0
+    inc_delay_sec = 0.0
+    inc_summaries: list[str] = []
+    has_tomtom = False
 
     if has_telemetry:
-        observed_avg_speed = round(sum(e.average_speed for e in stream_events) / sample_count, 1)
-        observed_density = round(sum(e.density for e in stream_events) / sample_count, 3)
-        cong_counts: dict[str, int] = {}
+        flow_events = []
+        incident_events = []
         for e in stream_events:
+            raw_evts = e.events if isinstance(e.events, list) else ([e.events] if isinstance(e.events, dict) else [])
+            src = raw_evts[0].get("source") if raw_evts and isinstance(raw_evts[0], dict) else None
+            if src == "tomtom_traffic_incidents":
+                incident_events.append(e)
+                has_tomtom = True
+            else:
+                flow_events.append(e)
+                if src == "tomtom_traffic_flow":
+                    has_tomtom = True
+
+        effective_flow = flow_events if flow_events else stream_events
+        observed_avg_speed = round(sum(e.average_speed for e in effective_flow) / len(effective_flow), 1)
+        observed_density = round(sum(e.density for e in effective_flow) / len(effective_flow), 3)
+
+        for inc in incident_events:
+            raw_evts = inc.events if isinstance(inc.events, list) else []
+            if raw_evts and isinstance(raw_evts[0], dict):
+                meta = raw_evts[0]
+                inc_delay_sec += float(meta.get("delay_seconds", 0.0))
+                desc = meta.get("description")
+                road = meta.get("from_road") or meta.get("to_road")
+                if desc:
+                    summary_txt = f"{desc} on {road}" if road else desc
+                    if summary_txt not in inc_summaries:
+                        inc_summaries.append(summary_txt)
+        active_incidents = len(incident_events)
+
+        cong_counts: dict[str, int] = {}
+        for e in effective_flow:
             cong_counts[e.congestion_level] = cong_counts.get(e.congestion_level, 0) + 1
-        observed_congestion = max(cong_counts.keys(), key=lambda k: cong_counts[k])
+        observed_congestion = max(cong_counts.keys(), key=lambda k: cong_counts[k]) if cong_counts else "LOW"
+
+        if active_incidents > 0 and (inc_delay_sec > 120 or any("Stationary" in s for s in inc_summaries)):
+            observed_congestion = "HIGH"
+        elif observed_density and observed_density > 0.5:
+            observed_congestion = "HIGH"
+        elif observed_density and observed_density > 0.25:
+            observed_congestion = "MEDIUM"
     else:
         observed_congestion = "NO_TELEMETRY"
 
@@ -346,6 +431,10 @@ def evaluate_corridor_telemetry(
         observed_density=observed_density,
         observed_congestion=observed_congestion,
         speed_limit_reference=round(speed_limit_ref, 1),
+        active_incidents_count=active_incidents,
+        incident_delay_seconds=round(inc_delay_sec, 1),
+        telemetry_source="TomTom Live Traffic" if has_tomtom else "RouteX Telemetry",
+        incidents_summary=inc_summaries[:5],
     )
 
     return (
@@ -379,8 +468,10 @@ def calculate_user_route(
             detail="Origin and destination must be different locations.",
         )
 
-    # 1. Fetch real road geometry from routing service
+    # 1. Fetch real road geometry from routing service (OSRM primary, TomTom/PostGIS fallback)
     osrm_data = fetch_osrm_route(o_lng, o_lat, d_lng, d_lat, request.include_alternatives)
+    if not osrm_data or not osrm_data.get("routes"):
+        osrm_data = fetch_tomtom_route(o_lng, o_lat, d_lng, d_lat)
     if not osrm_data or not osrm_data.get("routes"):
         # Attempt fallback to registered database corridor
         osrm_data = fallback_postgis_route(db, request.origin, request.destination)
@@ -413,6 +504,15 @@ def calculate_user_route(
                         candidate_route["legs"] = [{"summary": f"Via {preset.name}"}]
                         raw_routes.append(candidate_route)
                         break
+
+    # 1.2 Ingest genuine live TomTom traffic flow and incidents along route geometry
+    try:
+        for raw in raw_routes:
+            coords = raw.get("geometry", {}).get("coordinates", [])
+            if coords:
+                tomtom_traffic_service.ingest_route_observations(coords, db)
+    except Exception as tt_err:
+        logger.warning(f"TomTom route corridor ingestion error: {tt_err}")
 
     # 2. Evaluate corridor telemetry along EACH route alternative's geometry
     built_alternatives: list[RouteAlternative] = []
@@ -468,12 +568,14 @@ def calculate_user_route(
                     corridor_data_status="NO_TELEMETRY",
                     rank=idx + 1,
                     is_recommended=False,
+                    incidents_count=0,
                 )
             )
         else:
             traffic_speed = max(10.0, obs_speed or speed_ref)
             speed_factor = max(0.8, speed_ref / traffic_speed)
-            traffic_sec = round(ff_sec * speed_factor, 1)
+            inc_delay = c_detail.incident_delay_seconds or 0.0
+            traffic_sec = round((ff_sec * speed_factor) + inc_delay, 1)
             traffic_min = round(traffic_sec / 60.0, 1)
             delay_min = max(0.0, round((traffic_sec - ff_sec) / 60.0, 1))
 
@@ -492,6 +594,7 @@ def calculate_user_route(
                     corridor_data_status="LIVE_TELEMETRY",
                     rank=idx + 1,
                     is_recommended=False,
+                    incidents_count=c_detail.active_incidents_count,
                 )
             )
 
@@ -574,6 +677,11 @@ def calculate_user_route(
             }
             pred = predictor.predict(ai_input)
 
+            provider_name = (
+                primary_corridor.telemetry_source
+                if primary_corridor and primary_corridor.telemetry_source
+                else "RouteX sensor telemetry"
+            )
             ai_explanation = RouteAIExplanation(
                 status="AVAILABLE",
                 model_name="routex_production_predictor",
@@ -582,7 +690,7 @@ def calculate_user_route(
                 predicted_vehicle_count=pred.get("predicted_vehicle_count"),
                 features_used=ai_input,
                 explanation=(
-                    f"Forecast derived from {len(primary_stream_events)} stream telemetry observations along corridor. "
+                    f"Forecast derived from {len(primary_stream_events)} {provider_name} observations along corridor. "
                     f"Features: avg speed {primary_avg_speed} km/h, density {primary_density:.2f}, "
                     f"volume {mean_vehicles} veh."
                 ),
@@ -602,9 +710,9 @@ def calculate_user_route(
         )
 
     freshness_note = (
-        f"Corridor analyzed using {len(primary_stream_events)} active database telemetry events."
+        f"Corridor analyzed using {len(primary_stream_events)} active telemetry observations ({primary_corridor.telemetry_source if primary_corridor else 'TomTom'})."
         if primary_has_telemetry
-        else "No telemetry sensors on this corridor. Displaying free-flow road geometry and base distances."
+        else "No telemetry sensors or live provider coverage along this corridor. Displaying free-flow road geometry."
     )
 
     return RouteAnalysisResponse(
@@ -630,6 +738,7 @@ def calculate_user_route(
         recommended_route_summary=best_route.summary,
         recommendation_explanation=rec_explanation,
         recommendation_basis=rec_basis,
+        traffic_provider=primary_corridor.telemetry_source if primary_corridor and primary_corridor.telemetry_source else "TomTom Traffic API",
     )
 
 

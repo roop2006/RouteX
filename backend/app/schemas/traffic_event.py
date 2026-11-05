@@ -7,11 +7,11 @@ from pydantic import BaseModel, Field
 class TrafficEventCreate(BaseModel):
     total_vehicles: int = Field(ge=0)
 
-    vehicle_types: dict[str, int]
+    vehicle_types: dict[str, float | int]
 
-    lane_counts: dict[str, int]
+    lane_counts: dict[str, float | int]
 
-    direction_counts: dict[str, int]
+    direction_counts: dict[str, float | int]
 
     average_speed: float = Field(ge=0)
 
@@ -30,11 +30,11 @@ class TrafficEventResponse(BaseModel):
 
     total_vehicles: int
 
-    vehicle_types: dict[str, int]
+    vehicle_types: dict[str, float | int]
 
-    lane_counts: dict[str, int]
+    lane_counts: dict[str, float | int]
 
-    direction_counts: dict[str, int]
+    direction_counts: dict[str, float | int]
 
     average_speed: float
 

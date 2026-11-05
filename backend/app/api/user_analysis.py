@@ -1,7 +1,9 @@
 import json
+import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -22,6 +24,7 @@ from backend.app.services.route_analysis_service import (
 )
 from backend.app.services.video_analysis_service import (
     cancel_job,
+    get_annotated_video_path,
     get_video_job_status,
     save_and_start_video_analysis,
     start_local_video_analysis,
@@ -103,6 +106,21 @@ def cancel_video_analysis(job_id: str):
             detail=f"Job '{job_id}' could not be cancelled. It may already be completed or not exist.",
         )
     return {"message": f"Job '{job_id}' cancellation requested successfully."}
+
+
+@router.get("/video/{job_id}/stream")
+def stream_annotated_video(job_id: str):
+    """
+    Streams the fully processed, annotated video showing vehicle bounding boxes,
+    tracking IDs, classifications, and counting overlays.
+    """
+    path = get_annotated_video_path(job_id)
+    if not path or not os.path.exists(path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Annotated video for job '{job_id}' is not yet available or failed to generate.",
+        )
+    return FileResponse(path, media_type="video/mp4", filename=os.path.basename(path))
 
 
 @router.get("/geocoding/search", response_model=list[LocationSuggestion])

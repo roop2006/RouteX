@@ -40,6 +40,8 @@ export const TrafficMap: React.FC<TrafficMapProps> = ({
   const [showIntersections, setShowIntersections] = useState(true);
   const [showRoads, setShowRoads] = useState(true);
   const [showZones, setShowZones] = useState(true);
+  const [showTomTomFlow, setShowTomTomFlow] = useState(false);
+  const [showTomTomIncidents, setShowTomTomIncidents] = useState(false);
 
   // Parse road geometries safely
   const parsedRoads = roads
@@ -132,6 +134,34 @@ export const TrafficMap: React.FC<TrafficMapProps> = ({
             </span>
             {showZones ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
           </button>
+
+          <button
+            type="button"
+            onClick={() => setShowTomTomFlow((prev) => !prev)}
+            className={`w-full flex items-center justify-between gap-3 px-2 py-1 rounded text-left transition-colors ${
+              showTomTomFlow ? "text-emerald-400 bg-emerald-950/30 font-medium" : "text-slate-400 hover:text-slate-300"
+            }`}
+          >
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-0.5 bg-emerald-400"></span>
+              TomTom Flow
+            </span>
+            {showTomTomFlow ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowTomTomIncidents((prev) => !prev)}
+            className={`w-full flex items-center justify-between gap-3 px-2 py-1 rounded text-left transition-colors ${
+              showTomTomIncidents ? "text-rose-400 bg-rose-950/30 font-medium" : "text-slate-400 hover:text-slate-300"
+            }`}
+          >
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+              TomTom Incidents
+            </span>
+            {showTomTomIncidents ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+          </button>
         </div>
       </div>
 
@@ -158,10 +188,32 @@ export const TrafficMap: React.FC<TrafficMapProps> = ({
         <ChangeView center={center} zoom={zoom} />
 
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           maxZoom={19}
         />
+
+        {/* TomTom Live Flow Overlay Layer */}
+        {showTomTomFlow && (
+          <TileLayer
+            attribution='&copy; <a href="https://www.tomtom.com">TomTom</a>'
+            url={`${(import.meta.env.VITE_API_BASE_URL || "http://localhost:8001").replace(/\/+$/, "")}/live-traffic/tile/flow/{z}/{x}/{y}.png`}
+            opacity={0.65}
+            zIndex={15}
+            maxZoom={19}
+          />
+        )}
+
+        {/* TomTom Live Incidents Overlay Layer */}
+        {showTomTomIncidents && (
+          <TileLayer
+            attribution='&copy; <a href="https://www.tomtom.com">TomTom</a>'
+            url={`${(import.meta.env.VITE_API_BASE_URL || "http://localhost:8001").replace(/\/+$/, "")}/live-traffic/tile/incidents/{z}/{x}/{y}.png`}
+            opacity={0.8}
+            zIndex={16}
+            maxZoom={19}
+          />
+        )}
 
         {/* Zones Layer (PostGIS Polygons) */}
         {showZones &&
