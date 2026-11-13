@@ -1,4 +1,5 @@
 import base64
+import logging
 import os
 import re
 import threading
@@ -33,6 +34,8 @@ from vision.processing.line_counter import LineCounter
 from vision.processing.speed_estimator import SpeedEstimator
 from vision.processing.traffic_intelligence import TrafficIntelligence
 from vision.processing.traffic_processor import TrafficProcessor
+
+logger = logging.getLogger("routex.video_analysis")
 from vision.tracking.tracker import VehicleTracker
 
 # Safe upload storage directory
@@ -532,6 +535,27 @@ def _process_video_worker(job_id: str, file_path: str, intersection_id: Optional
                             )
                             db.add(video_event)
                             db.commit()
+                            try:
+                                from backend.app.services.alert_service import process_alert_event
+                                process_alert_event(db, {
+                                    "source": "video_analysis",
+                                    "source_event_id": f"video:{job_id}",
+                                    "timestamp": now,
+                                    "intersection_id": associated_intersection,
+                                    "latitude": inter.latitude,
+                                    "longitude": inter.longitude,
+                                    "total_vehicles": total_unique_vehicles,
+                                    "average_speed": round(final_speed, 1),
+                                    "density": round(final_density, 3),
+                                    "congestion_level": final_congestion,
+                                    "anomaly_detected": bool(anomaly_events),
+                                    "events": [
+                                        {"source": "video_analysis", "job_id": job_id},
+                                        *[item for item in anomaly_events if isinstance(item, dict)],
+                                    ],
+                                })
+                            except Exception as alert_error:
+                                logger.warning("Video observation stored; alert evaluation skipped: %s", alert_error)
                     finally:
                         db.close()
                 except Exception:

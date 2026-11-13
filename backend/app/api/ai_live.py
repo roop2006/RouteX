@@ -10,6 +10,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 import redis
+import logging
 
 from backend.app.core.database import get_db
 from backend.app.services.live_traffic_service import live_traffic_service
@@ -25,6 +26,7 @@ router = APIRouter(
 
 
 predictor = None
+logger = logging.getLogger("routex.ai_live")
 
 
 def get_predictor():
@@ -95,6 +97,29 @@ def live_prediction(db: Session = Depends(get_db)):
         prediction = model.predict(
             prediction_input
         )
+
+        if traffic_data.get("freshness") not in {"STALE", "HISTORICAL", "UNAVAILABLE"}:
+            try:
+                from backend.app.services.alert_service import process_alert_event
+                provider_source = traffic_data.get("source", "unknown")
+                source_timestamp = traffic_data.get("timestamp") or now.isoformat()
+                process_alert_event(db, {
+                    "source": "routex_production_predictor",
+                    "source_event_id": f"ai:{provider_source}:{source_timestamp}",
+                    "timestamp": source_timestamp,
+                    "intersection_id": traffic_data.get("intersection_id"),
+                    "latitude": traffic_data.get("latitude"),
+                    "longitude": traffic_data.get("longitude"),
+                    "total_vehicles": traffic_data.get("total_vehicles", 0),
+                    "average_speed": traffic_data.get("average_speed", 0),
+                    "free_flow_speed": traffic_data.get("free_flow_speed"),
+                    "density": traffic_data.get("density", 0),
+                    "congestion_level": traffic_data.get("congestion_level"),
+                    "predicted_congestion": prediction.get("predicted_congestion"),
+                    "details": {"model_name": "routex_production_predictor", "prediction_confidence": prediction.get("prediction_confidence")},
+                })
+            except Exception as alert_error:
+                logger.warning("Live prediction completed; alert evaluation skipped: %s", alert_error)
 
         return {
             "traffic_data": traffic_data,

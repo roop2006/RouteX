@@ -1,9 +1,12 @@
 import io
+import json
 from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
+from backend.app.core.database import SessionLocal
 from backend.app.main import app
 from backend.app.services import video_analysis_service as vas
 
@@ -61,13 +64,46 @@ def test_route_analysis_corridor_with_telemetry(client):
     assert "ai_prediction" in data
 
     route = data["selected_route"]
+    assert route["route_id"]
     assert route["distance_km"] > 0
     assert route["free_flow_duration_minutes"] > 0
     assert route["geometry"]["type"] == "LineString"
     assert len(route["geometry"]["coordinates"]) >= 2
 
+    # Every selectable route carries its own spatial corridor results and AI result.
+    with SessionLocal() as db:
+        for alternative in data["alternatives"]:
+            assert alternative["route_id"]
+            assert alternative["corridor"] is not None
+            assert alternative["ai_prediction"]["status"] in ("AVAILABLE", "INSUFFICIENT_DATA")
+            for road in alternative["corridor"]["matched_roads"]:
+                assert road["road_id"] and road["geometry"]
+                assert road["match_relation"] in ("INTERSECTS", "NEARBY")
+                assert road["distance_to_route_meters"] <= 250
+            for intersection in alternative["corridor"]["nearby_intersections"]:
+                assert intersection["distance_to_route_meters"] <= 350
+            for observation in alternative["corridor"]["traffic_observations"]:
+                assert -90 <= observation["latitude"] <= 90
+                assert -180 <= observation["longitude"] <= 180
+                assert observation["source"]
+                is_spatially_matched = db.execute(
+                    text("""
+                        SELECT ST_DWithin(
+                            location::geography,
+                            ST_SetSRID(ST_GeomFromGeoJSON(:geom), 4326)::geography,
+                            350
+                        )
+                        FROM traffic_stream_events
+                        WHERE id = :event_id
+                    """),
+                    {"geom": json.dumps(alternative["geometry"]), "event_id": observation["id"]},
+                ).scalar_one()
+                assert is_spatially_matched is True
+
     # Corridor verification
     corridor = data["corridor"]
+    assert corridor["traffic_observations"] is not None
+    assert corridor["observation_freshness"] in ("FRESH", "RECENT", "HISTORICAL", "UNAVAILABLE")
     assert corridor["telemetry_status"] in ("AVAILABLE", "UNAVAILABLE")
     if corridor["telemetry_status"] == "AVAILABLE":
         assert corridor["observed_average_speed"] is not None

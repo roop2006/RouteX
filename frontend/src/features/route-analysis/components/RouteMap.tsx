@@ -100,11 +100,10 @@ const AutoBoundsController: React.FC<{
 // Map click listener for interactive map-based pin placement
 const MapClickHandler: React.FC<{
   onMapClick?: (lat: number, lng: number) => void;
-  clickMode?: "origin" | "destination" | null;
-}> = ({ onMapClick, clickMode }) => {
+}> = ({ onMapClick }) => {
   useMapEvents({
     click(e) {
-      if (clickMode && onMapClick) {
+      if (onMapClick) {
         onMapClick(e.latlng.lat, e.latlng.lng);
       }
     },
@@ -285,7 +284,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
           destination={destination}
           routeGeometry={selectedRoute?.geometry}
         />
-        <MapClickHandler onMapClick={onMapClick} clickMode={clickMode} />
+        <MapClickHandler onMapClick={onMapClick} />
 
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'

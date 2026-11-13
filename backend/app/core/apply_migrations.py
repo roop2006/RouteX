@@ -10,12 +10,19 @@ from backend.app.models import (
     RoadSegment,
     TrafficZone,
     PredictionHistory,
+    AlertRule,
+    TrafficAlert,
+    AlertNotification,
 )
 
 
 def apply_migrations():
     print("Applying RouteX database migrations (non-destructive)...")
     Base.metadata.create_all(bind=engine)
+    from backend.app.core.database import SessionLocal
+    from backend.app.services.alert_service import initialize_alert_rules
+    with SessionLocal() as db:
+        initialize_alert_rules(db)
     print("Migrations applied successfully. All tables verified.")
 
 

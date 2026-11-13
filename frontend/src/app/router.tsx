@@ -11,6 +11,7 @@ import { IntersectionsPage } from "../features/intersections/IntersectionsPage";
 import { PredictionsPage } from "../features/predictions/PredictionsPage";
 import { PredictionHistoryPage } from "../features/predictions/PredictionHistoryPage";
 import { SystemStatusPage } from "../features/system/SystemStatusPage";
+import { AlertsPage } from "../features/alerts/AlertsPage";
 
 export const AppRouter: React.FC = () => {
   return (
@@ -19,6 +20,7 @@ export const AppRouter: React.FC = () => {
         <Route index element={<OverviewPage />} />
         <Route path="overview" element={<OverviewPage />} />
         <Route path="live-traffic" element={<LiveTrafficPage />} />
+        <Route path="alerts" element={<AlertsPage />} />
         <Route path="map" element={<MapPage />} />
         <Route path="analysis" element={<AnalysisPage />} />
         <Route path="route-analysis" element={<RouteAnalysisPage />} />

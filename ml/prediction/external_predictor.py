@@ -42,6 +42,10 @@ class ExternalTrafficPredictor:
             )
 
         self.model = joblib.load(self.model_path)
+        # Single-observation API inference does not benefit from a worker pool and
+        # remains deterministic/reliable in Windows services and constrained runtimes.
+        if hasattr(self.model, "n_jobs"):
+            self.model.n_jobs = 1
         self.metadata = self._load_metadata()
         self.expected_features = EXTERNAL_FEATURES
 

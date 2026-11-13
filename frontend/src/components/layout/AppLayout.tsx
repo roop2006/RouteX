@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
+import { SelectedRouteProvider } from "../../contexts/SelectedRouteProvider";
 
 export const AppLayout: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -19,11 +20,13 @@ export const AppLayout: React.FC = () => {
         <Topbar onMenuToggle={() => setIsSidebarOpen((prev) => !prev)} />
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
-          <Outlet />
+          <SelectedRouteProvider>
+            <Outlet />
+          </SelectedRouteProvider>
         </main>
 
         <footer className="py-4 px-6 border-t border-slate-900 text-center text-xs text-slate-400">
-          RouteX Intelligent Traffic Management System &copy; 2026 &bull; Phase 8 Dashboard Integration
+          RouteX Intelligent Traffic Management System &copy; 2026 &bull; Phase 9 Alerts &amp; Automation
         </footer>
       </div>
     </div>

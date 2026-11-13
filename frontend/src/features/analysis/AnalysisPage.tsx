@@ -14,21 +14,51 @@ import { EmptyState } from "../../components/common/EmptyState";
 import { useTrafficEvents } from "../../hooks/useLiveTraffic";
 import { formatSpeed, formatDensity, formatTimestamp } from "../../utils/formatters";
 import { getCongestionBadgeClass } from "../../utils/congestion";
+import { useSelectedRoute } from "../../contexts/selectedRouteContext";
+import type { TrafficEvent } from "../../types/traffic";
 
 export const AnalysisPage: React.FC = () => {
   const [congestionFilter, setCongestionFilter] = useState<string>("ALL");
   const [limitFilter, setLimitFilter] = useState<number>(50);
+  const routeContext = useSelectedRoute();
+  const routeMode = Boolean(routeContext.analysis && routeContext.selectedRoute);
+  const routeCorridor = routeContext.selectedRoute?.corridor || routeContext.analysis?.corridor;
 
   const {
-    data: events = [],
-    isLoading,
-    error,
-    refetch,
+    data: generalEvents = [],
+    isLoading: isLoadingGeneral,
+    error: generalError,
+    refetch: refetchGeneral,
   } = useTrafficEvents({
     congestion_level: congestionFilter === "ALL" ? undefined : congestionFilter,
     limit: limitFilter,
     skip: 0,
-  });
+  }, !routeMode);
+
+  const routeEvents: TrafficEvent[] = (routeCorridor?.traffic_observations || []).map((observation) => ({
+    id: observation.id,
+    intersection_id: observation.intersection_id ?? null,
+    latitude: observation.latitude,
+    longitude: observation.longitude,
+    total_vehicles: observation.total_vehicles,
+    vehicle_types: observation.vehicle_types,
+    lane_counts: observation.lane_counts,
+    direction_counts: observation.direction_counts,
+    average_speed: observation.average_speed,
+    density: observation.density,
+    congestion_level: observation.congestion_level,
+    events: [observation.details],
+    timestamp: observation.timestamp,
+    source: observation.source,
+    event_type: observation.event_type,
+    severity: observation.severity,
+    description: observation.description,
+    delay_seconds: observation.delay_seconds,
+  }));
+  const events = routeMode ? routeEvents : generalEvents;
+  const isLoading = !routeMode && isLoadingGeneral;
+  const error = !routeMode ? generalError : null;
+  const refetch = refetchGeneral;
 
   // Aggregate stats across fetched real events
   const totalRecords = events.length;
@@ -55,7 +85,9 @@ export const AnalysisPage: React.FC = () => {
     <div className="space-y-6">
       <PageHeader
         title="Traffic Flow Analysis"
-        subtitle="Historical stream events, aggregated volume analytics, and congestion patterns"
+        subtitle={routeMode
+          ? "Traffic observations spatially associated with the selected route corridor"
+          : "Historical stream events, aggregated volume analytics, and congestion patterns"}
         actions={
           <div className="flex items-center gap-3">
             {/* Filter by congestion */}
@@ -91,6 +123,41 @@ export const AnalysisPage: React.FC = () => {
           </div>
         }
       />
+
+      {routeMode && routeContext.analysis && routeContext.selectedRoute && routeCorridor && (
+        <section className="rounded-xl border border-blue-500/30 bg-blue-950/20 p-4 space-y-3" aria-label="Selected route traffic summary">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wider text-blue-300">Selected route traffic</div>
+              <div className="mt-1 text-sm text-white">
+                {routeContext.origin?.name || `${routeContext.origin?.lat.toFixed(4)}, ${routeContext.origin?.lng.toFixed(4)}`}
+                <span className="mx-2 text-slate-500">â†’</span>
+                {routeContext.destination?.name || `${routeContext.destination?.lat.toFixed(4)}, ${routeContext.destination?.lng.toFixed(4)}`}
+                <span className="ml-2 text-slate-400">({routeContext.selectedRoute.distance_km} km)</span>
+              </div>
+            </div>
+            <span className="text-xs text-slate-300">
+              {routeCorridor.observation_freshness || "UNAVAILABLE"} â€¢ {routeCorridor.telemetry_source || "No observation source"}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <div><span className="text-slate-400 block">Congestion</span><strong className="text-white">{routeCorridor.observed_congestion || "UNAVAILABLE"}</strong></div>
+            <div><span className="text-slate-400 block">Observed / reference speed</span><strong className="text-white">{routeCorridor.observed_average_speed ?? "â€”"} / {routeCorridor.observed_free_flow_speed ?? routeCorridor.speed_limit_reference ?? "â€”"} km/h</strong><span className="block text-[10px] text-slate-500">Reference uses observed free-flow speed when available, otherwise registered speed limit.</span></div>
+            <div><span className="text-slate-400 block">Average volume / density</span><strong className="text-white">{routeCorridor.observed_total_vehicles ?? "â€”"} vehicles / {routeCorridor.observed_density ?? "â€”"}</strong></div>
+            <div><span className="text-slate-400 block">Delay / matched observations</span><strong className="text-white">{routeCorridor.incident_delay_seconds ? `${Math.round(routeCorridor.incident_delay_seconds / 60)} min` : "No reported incident delay"} / {routeCorridor.telemetry_sample_count}</strong></div>
+          </div>
+          {routeCorridor.latest_observation_at && (
+            <div className="text-[11px] text-slate-400">Latest observation: {formatTimestamp(routeCorridor.latest_observation_at)} ({Math.round((routeCorridor.observation_age_seconds || 0) / 60)} min ago)</div>
+          )}
+          {routeContext.selectedRoute.ai_prediction && (
+            <div className="border-t border-blue-900/60 pt-3 text-xs text-slate-300">
+              Route AI: <strong className="text-white">{routeContext.selectedRoute.ai_prediction.status}</strong>
+              {routeContext.selectedRoute.ai_prediction.predicted_congestion && ` â€¢ ${routeContext.selectedRoute.ai_prediction.predicted_congestion}`}
+              {routeContext.selectedRoute.ai_prediction.explanation && ` â€¢ ${routeContext.selectedRoute.ai_prediction.explanation}`}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Aggregate KPI Strip */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -138,8 +205,10 @@ export const AnalysisPage: React.FC = () => {
         />
       ) : events.length === 0 ? (
         <EmptyState
-          title="No Traffic Events Found"
-          description={`No events matched congestion level "${congestionFilter}". Try selecting ALL.`}
+          title={routeMode ? "No Traffic Observations Along This Route" : "No Traffic Events Found"}
+          description={routeMode
+            ? "No stored observations fall within the selected route corridor. Route-level infrastructure and traffic metrics remain available when present."
+            : `No events matched congestion level "${congestionFilter}". Try selecting ALL.`}
         />
       ) : (
         <div className="space-y-6">
@@ -169,29 +238,40 @@ export const AnalysisPage: React.FC = () => {
                   <tr>
                     <th className="py-3 px-4">ID</th>
                     <th className="py-3 px-4">Timestamp</th>
+                    <th className="py-3 px-4">Event / Source</th>
                     <th className="py-3 px-4">Vehicles</th>
                     <th className="py-3 px-4">Congestion</th>
                     <th className="py-3 px-4">Avg Speed</th>
                     <th className="py-3 px-4">Density</th>
-                    <th className="py-3 px-4">Intersection</th>
+                    <th className="py-3 px-4">Location</th>
+                    <th className="py-3 px-4">Severity / Delay</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {events.map((evt) => (
-                    <tr key={evt.id} className="hover:bg-slate-800/30 transition-colors">
-                      <td className="py-3 px-4 font-mono font-medium text-slate-200">#{evt.id}</td>
-                      <td className="py-3 px-4 font-mono text-slate-400">{formatTimestamp(evt.timestamp)}</td>
-                      <td className="py-3 px-4 font-mono font-bold text-white">{evt.total_vehicles}</td>
-                      <td className="py-3 px-4">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${getCongestionBadgeClass(evt.congestion_level)}`}>
-                          {evt.congestion_level}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 font-mono text-slate-300">{formatSpeed(evt.average_speed)}</td>
-                      <td className="py-3 px-4 font-mono text-slate-300">{formatDensity(evt.density)}</td>
-                      <td className="py-3 px-4 font-mono text-slate-400">{evt.intersection_id || "Unassigned"}</td>
-                    </tr>
-                  ))}
+                  {events.map((evt) => {
+                    const detail = evt.events.find((entry) => entry && typeof entry === "object") || {};
+                    return (
+                      <tr key={evt.id} className="hover:bg-slate-800/30 transition-colors">
+                        <td className="py-3 px-4 font-mono font-medium text-slate-200">#{evt.id}</td>
+                        <td className="py-3 px-4 font-mono text-slate-400">{formatTimestamp(evt.timestamp)}</td>
+                        <td className="py-3 px-4 text-slate-300">
+                          <span className="block">{evt.event_type || String(detail.category_name || detail.event_type || "Traffic observation")}</span>
+                          <span className="text-[10px] text-slate-500">{evt.source || String(detail.source || "RouteX Telemetry")}</span>
+                          {evt.description && <span className="block max-w-xs truncate text-[10px] text-slate-400">{evt.description}</span>}
+                        </td>
+                        <td className="py-3 px-4 font-mono font-bold text-white">{evt.total_vehicles}</td>
+                        <td className="py-3 px-4">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${getCongestionBadgeClass(evt.congestion_level)}`}>
+                            {evt.congestion_level}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 font-mono text-slate-300">{formatSpeed(evt.average_speed)}</td>
+                        <td className="py-3 px-4 font-mono text-slate-300">{formatDensity(evt.density)}</td>
+                        <td className="py-3 px-4 font-mono text-slate-400">{evt.latitude?.toFixed(4)}, {evt.longitude?.toFixed(4)}{evt.intersection_id ? ` (${evt.intersection_id})` : ""}</td>
+                        <td className="py-3 px-4 font-mono text-slate-400">{evt.severity == null ? "—" : `M${evt.severity}`}{evt.delay_seconds ? ` / ${Math.round(evt.delay_seconds / 60)} min` : ""}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

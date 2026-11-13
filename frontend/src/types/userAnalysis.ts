@@ -12,6 +12,7 @@ export interface RouteAnalysisRequest {
 }
 
 export interface RouteAlternative {
+  route_id: string;
   summary: string;
   distance_meters: number;
   distance_km: number;
@@ -30,6 +31,8 @@ export interface RouteAlternative {
   is_recommended?: boolean;
   recommendation_reason?: string | null;
   incidents_count?: number;
+  corridor?: CorridorDetail | null;
+  ai_prediction?: RouteAIExplanation | null;
 }
 
 export interface CorridorRoadMatch {
@@ -37,6 +40,15 @@ export interface CorridorRoadMatch {
   road_name: string;
   speed_limit: number;
   lanes: number;
+  geometry?: Record<string, unknown> | null;
+  length_meters?: number | null;
+  distance_to_route_meters?: number | null;
+  match_relation?: "INTERSECTS" | "NEARBY" | string;
+  observed_average_speed?: number | null;
+  observed_congestion?: string | null;
+  observation_count?: number;
+  last_observation_at?: string | null;
+  observation_source?: string | null;
 }
 
 export interface CorridorIntersectionMatch {
@@ -44,6 +56,13 @@ export interface CorridorIntersectionMatch {
   name: string;
   latitude: number;
   longitude: number;
+  distance_to_route_meters?: number | null;
+  associated_road_ids?: string[];
+  observed_average_speed?: number | null;
+  observed_congestion?: string | null;
+  observation_count?: number;
+  last_observation_at?: string | null;
+  observation_source?: string | null;
 }
 
 export interface CorridorZoneMatch {
@@ -56,16 +75,44 @@ export interface CorridorDetail {
   matched_roads: CorridorRoadMatch[];
   nearby_intersections: CorridorIntersectionMatch[];
   traversed_zones: CorridorZoneMatch[];
+  traffic_observations: RouteTrafficObservation[];
   telemetry_status: "AVAILABLE" | "UNAVAILABLE";
   telemetry_sample_count: number;
   observed_average_speed: number | null;
+  observed_free_flow_speed?: number | null;
   observed_density: number | null;
+  observed_total_vehicles?: number | null;
   observed_congestion: string | null;
   speed_limit_reference: number | null;
+  latest_observation_at?: string | null;
+  observation_age_seconds?: number | null;
+  observation_freshness?: string;
   active_incidents_count?: number;
   incident_delay_seconds?: number;
   telemetry_source?: string | null;
   incidents_summary?: string[];
+}
+
+export interface RouteTrafficObservation {
+  id: number;
+  intersection_id?: string | null;
+  latitude: number;
+  longitude: number;
+  total_vehicles: number;
+  vehicle_types: Record<string, number>;
+  lane_counts: Record<string, number>;
+  direction_counts: Record<string, number>;
+  average_speed: number;
+  free_flow_speed?: number | null;
+  density: number;
+  congestion_level: string;
+  timestamp: string;
+  source: string;
+  event_type?: string | null;
+  severity?: number | null;
+  description?: string | null;
+  delay_seconds?: number | null;
+  details: Record<string, unknown>;
 }
 
 export interface RouteAIExplanation {

@@ -19,7 +19,7 @@ from backend.app.core.database import SessionLocal
 from backend.app.main import app
 from backend.app.models.traffic_stream_event import TrafficStreamEvent
 from backend.app.schemas.user_analysis import RouteAnalysisRequest, RouteCoordinates
-from backend.app.services.route_analysis_service import calculate_user_route
+from backend.app.services.route_analysis_service import calculate_user_route, fetch_tomtom_route
 from backend.app.services.tomtom_traffic_service import tomtom_traffic_service
 from ml.prediction.predictor import TrafficPredictor
 
@@ -100,6 +100,74 @@ def test_tomtom_incidents_details_parsing():
         assert "length_meters" in first
         assert first["source"] == "tomtom_traffic_incidents"
         assert first["delay_seconds"] >= 0.0
+
+
+def test_live_incidents_endpoint_exposes_tomtom_upstream_failure(client, monkeypatch):
+    monkeypatch.setattr(tomtom_traffic_service, "last_incident_error", None)
+
+    def fail_incident_query(**_kwargs):
+        tomtom_traffic_service.last_incident_error = (
+            "TomTom incident request failed: outbound connection refused"
+        )
+        return []
+
+    monkeypatch.setattr(tomtom_traffic_service, "get_incident_details", fail_incident_query)
+    response = client.get("/live-traffic/incidents")
+
+    assert response.status_code == 502
+    assert "outbound connection refused" in response.json()["detail"]
+
+
+def test_live_traffic_fallback_reports_tomtom_failure(client, monkeypatch):
+    from vision.streaming.redis_client import TrafficRedis
+
+    monkeypatch.setattr(tomtom_traffic_service, "last_flow_error", None)
+
+    def fail_flow_query(*_args, **_kwargs):
+        tomtom_traffic_service.last_flow_error = "TomTom traffic flow: outbound connection refused"
+        return None
+
+    monkeypatch.setattr(TrafficRedis, "get_latest", lambda _self: None)
+    monkeypatch.setattr(tomtom_traffic_service, "get_flow_segment_data", fail_flow_query)
+
+    response = client.get("/live-traffic/")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] in ("CACHED_STREAM", "UNAVAILABLE")
+    assert "outbound connection refused" in data["provider_error"]
+
+
+def test_tomtom_routing_fallback_uses_httpx_client(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "routes": [{
+                    "summary": {"lengthInMeters": 1250, "travelTimeInSeconds": 180},
+                    "legs": [{"points": [
+                        {"longitude": 80.27, "latitude": 13.08},
+                        {"longitude": 80.28, "latitude": 13.09},
+                    ]}],
+                }]
+            }
+
+    def fake_get(url, *, params, timeout):
+        captured.update(url=url, params=params, timeout=timeout)
+        return FakeResponse()
+
+    monkeypatch.setattr("backend.app.services.route_analysis_service.httpx.get", fake_get)
+    route = fetch_tomtom_route(80.27, 13.08, 80.28, 13.09)
+
+    assert route["code"] == "Ok"
+    assert route["routes"][0]["geometry"]["coordinates"] == [[80.27, 13.08], [80.28, 13.09]]
+    assert captured["timeout"] == 6.0
+    assert "key" in captured["params"]
+    assert "key=" not in captured["url"]
 
 
 # -----------------------------------------------------------------------------

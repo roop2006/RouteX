@@ -19,6 +19,7 @@ from backend.app.schemas.user_analysis import (
     VideoAnalysisStatusResponse,
 )
 from backend.app.services.route_analysis_service import (
+    INTERSECTION_ROUTE_CORRIDOR_METERS,
     calculate_user_route,
     search_locations,
 )
@@ -207,10 +208,10 @@ def combine_route_and_video(
                 ).first()
 
                 dist_m = float(dist_res.dist_meters) if dist_res and dist_res.dist_meters is not None else 99999.0
-                if dist_m <= 500.0:
+                if dist_m <= INTERSECTION_ROUTE_CORRIDOR_METERS:
                     is_associated = True
                     association_reason = (
-                        f"Video intersection '{int_row.name}' is within {round(dist_m)}m of the route corridor."
+                        f"Video intersection '{int_row.name}' is within {round(dist_m)}m of the configured route corridor."
                     )
                 else:
                     is_associated = False

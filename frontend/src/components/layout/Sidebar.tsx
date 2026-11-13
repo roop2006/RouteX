@@ -13,6 +13,7 @@ import {
   Car,
   X,
   Navigation,
+  BellRing,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { checkBackendConnection } from "../../api/health";
@@ -32,6 +33,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { label: "Overview", path: "/", icon: LayoutDashboard },
   { label: "Live Traffic", path: "/live-traffic", icon: Activity, badge: "Live" },
+  { label: "Traffic Alerts", path: "/alerts", icon: BellRing },
   { label: "Traffic Map", path: "/map", icon: MapIcon },
   { label: "Traffic Analysis", path: "/analysis", icon: BarChart3 },
   { label: "Route & Video Analysis", path: "/route-analysis", icon: Navigation, badge: "AI" },
@@ -131,7 +133,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         <div className="p-4 border-t border-slate-800/80 text-xs text-slate-400 space-y-1">
           <div className="flex items-center justify-between">
             <span>RouteX Engine</span>
-            <span className="font-mono text-[11px] text-slate-300">Phase 8</span>
+            <span className="font-mono text-[11px] text-slate-300">Phase 9</span>
           </div>
           <div className="flex items-center gap-1.5 text-[11px]">
             <span

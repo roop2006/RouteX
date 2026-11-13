@@ -21,6 +21,30 @@ def test_health_endpoint(client):
     assert response.json() == {"status": "healthy"}
 
 
+def test_traffic_event_preserves_fractional_direction_distance(client):
+    fractional_length = 119.027384658
+    payload = {
+        "total_vehicles": 1,
+        "vehicle_types": {"car": 1.0},
+        "lane_counts": {},
+        "direction_counts": {"length_meters": fractional_length},
+        "average_speed": 0.0,
+        "density": 0.0,
+        "congestion_level": "LOW",
+        "events": [],
+    }
+
+    created = client.post("/traffic-events/", json=payload)
+    assert created.status_code == 200
+    event_id = created.json()["id"]
+    assert created.json()["direction_counts"]["length_meters"] == fractional_length
+
+    listed = client.get("/traffic-events/", params={"limit": 100})
+    assert listed.status_code == 200
+    matching = next(event for event in listed.json() if event["id"] == event_id)
+    assert matching["direction_counts"]["length_meters"] == fractional_length
+
+
 def test_predict_traffic_post(client):
     payload = {
         "total_vehicles": 14,

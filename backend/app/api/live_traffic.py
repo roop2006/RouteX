@@ -55,6 +55,7 @@ def get_live_incidents(
     min_lat: float = Query(default=12.94, ge=-90.0, le=90.0),
     max_lng: float = Query(default=80.32, ge=-180.0, le=180.0),
     max_lat: float = Query(default=13.18, ge=-90.0, le=90.0),
+    db: Session = Depends(get_db),
 ):
     """
     Retrieves active live traffic incidents within a bounding box from TomTom.
@@ -74,6 +75,31 @@ def get_live_incidents(
         max_lng=max_lng,
         max_lat=max_lat,
     )
+    if tomtom_traffic_service.last_incident_error:
+        raise HTTPException(
+            status_code=502,
+            detail=tomtom_traffic_service.last_incident_error,
+        )
+    for incident in incidents:
+        try:
+            from backend.app.services.alert_service import process_alert_event
+            process_alert_event(db, {
+                "source": "tomtom_traffic_incidents",
+                "source_event_id": incident.get("id"),
+                "timestamp": incident.get("start_time"),
+                "latitude": incident.get("centroid_lat"),
+                "longitude": incident.get("centroid_lng"),
+                "delay_seconds": incident.get("delay_seconds"),
+                "road_name": incident.get("from_road") or incident.get("to_road"),
+                "events": [incident],
+                "details": {"provider": "TomTom Traffic Incidents API"},
+            })
+        except Exception:
+            import logging
+            logging.getLogger("routex.live_traffic").exception(
+                "TomTom incident returned; alert creation failed for provider event %s",
+                incident.get("id"),
+            )
     return {
         "status": "ACTIVE",
         "provider": "TomTom Traffic Incidents API",

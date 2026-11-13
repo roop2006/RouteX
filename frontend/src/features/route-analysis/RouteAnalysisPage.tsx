@@ -45,6 +45,7 @@ import type {
   CombinedAnalysisResponse,
 } from "../../types/userAnalysis";
 import { getCongestionBadgeClass } from "../../utils/congestion";
+import { useSelectedRoute } from "../../contexts/selectedRouteContext";
 
 type ActiveTab = "route" | "video" | "integrated";
 
@@ -59,20 +60,29 @@ const PRESET_QUICK_POINTS: { name: string; lat: number; lng: number }[] = [
 
 export const RouteAnalysisPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>("route");
+  const routeContext = useSelectedRoute();
 
   // Route Form State
-  const [originText, setOriginText] = useState("RouteX Test Intersection (INT_001)");
-  const [originCoords, setOriginCoords] = useState<RouteCoordinates | null>({
-    lat: 13.0827,
-    lng: 80.2707,
-    name: "RouteX Test Intersection (INT_001)",
-  });
-  const [destText, setDestText] = useState("Chennai Central Junction");
-  const [destCoords, setDestCoords] = useState<RouteCoordinates | null>({
-    lat: 13.0824,
-    lng: 80.2755,
-    name: "Chennai Central Junction",
-  });
+  const [originText, setOriginText] = useState(
+    routeContext.origin?.name || "RouteX Test Intersection (INT_001)"
+  );
+  const [originCoords, setOriginCoords] = useState<RouteCoordinates | null>(
+    routeContext.origin || {
+      lat: 13.0827,
+      lng: 80.2707,
+      name: "RouteX Test Intersection (INT_001)",
+    }
+  );
+  const [destText, setDestText] = useState(
+    routeContext.destination?.name || "Chennai Central Junction"
+  );
+  const [destCoords, setDestCoords] = useState<RouteCoordinates | null>(
+    routeContext.destination || {
+      lat: 13.0824,
+      lng: 80.2755,
+      name: "Chennai Central Junction",
+    }
+  );
 
   const [mapClickMode, setMapClickMode] = useState<"origin" | "destination" | null>(null);
   const [activeSearchTarget, setActiveSearchTarget] = useState<"origin" | "destination" | null>(null);
@@ -82,11 +92,40 @@ export const RouteAnalysisPage: React.FC = () => {
   const [videoIntersectionId, setVideoIntersectionId] = useState("STANDALONE_CAMERA");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const routeRequestVersionRef = useRef(0);
 
   // Analysis Results State
-  const [routeResult, setRouteResult] = useState<RouteAnalysisResponse | null>(null);
-  const [activeAlternative, setActiveAlternative] = useState<RouteAlternative | null>(null);
+  const [routeResult, setRouteResult] = useState<RouteAnalysisResponse | null>(routeContext.analysis);
+  const [activeAlternative, setActiveAlternative] = useState<RouteAlternative | null>(routeContext.selectedRoute);
   const [combinedResult, setCombinedResult] = useState<CombinedAnalysisResponse | null>(null);
+
+  const invalidateRouteResults = () => {
+    routeRequestVersionRef.current += 1;
+    routeContext.clearRoute();
+    setRouteResult(null);
+    setActiveAlternative(null);
+    setCombinedResult(null);
+  };
+  const setOriginLocation = (coords: RouteCoordinates | null) => {
+    invalidateRouteResults();
+    setOriginCoords(coords);
+    setOriginText(coords?.name || "");
+  };
+  const setDestinationLocation = (coords: RouteCoordinates | null) => {
+    invalidateRouteResults();
+    setDestCoords(coords);
+    setDestText(coords?.name || "");
+  };
+  const editOriginText = (text: string) => {
+    invalidateRouteResults();
+    setOriginCoords(null);
+    setOriginText(text);
+  };
+  const editDestinationText = (text: string) => {
+    invalidateRouteResults();
+    setDestCoords(null);
+    setDestText(text);
+  };
 
   // Queries & Mutations
   const searchQuery =
@@ -131,21 +170,17 @@ export const RouteAnalysisPage: React.FC = () => {
     };
 
     if (targetMode === "origin") {
-      setOriginCoords(coords);
-      setOriginText(coords.name || "");
+      setOriginLocation(coords);
       setMapClickMode(null);
     } else if (targetMode === "destination") {
-      setDestCoords(coords);
-      setDestText(coords.name || "");
+      setDestinationLocation(coords);
       setMapClickMode(null);
     } else {
       // Direct click on map when no mode was explicitly selected:
       if (!originCoords) {
-        setOriginCoords(coords);
-        setOriginText(coords.name || "");
+        setOriginLocation(coords);
       } else {
-        setDestCoords(coords);
-        setDestText(coords.name || "");
+        setDestinationLocation(coords);
       }
     }
   };
@@ -161,7 +196,8 @@ export const RouteAnalysisPage: React.FC = () => {
   // Submit Route Analysis
   const handleRunRouteAnalysis = () => {
     if (!originCoords || !destCoords || sameLocationSelected) return;
-    setRouteResult(null);
+    invalidateRouteResults();
+    const requestVersion = routeRequestVersionRef.current;
     routeMutation.mutate(
       {
         origin: originCoords,
@@ -170,8 +206,10 @@ export const RouteAnalysisPage: React.FC = () => {
       },
       {
         onSuccess: (data) => {
+          if (requestVersion !== routeRequestVersionRef.current) return;
           setRouteResult(data);
           setActiveAlternative(data.selected_route);
+          routeContext.setAnalysis(data);
         },
       }
     );
@@ -225,6 +263,7 @@ export const RouteAnalysisPage: React.FC = () => {
   // Run Combined Analysis
   const handleRunCombined = () => {
     if (!originCoords || !destCoords || !activeJobId || jobStatus?.status !== "COMPLETED") return;
+    const requestVersion = routeRequestVersionRef.current;
     setCombinedResult(null);
     combinedMutation.mutate(
       {
@@ -237,8 +276,11 @@ export const RouteAnalysisPage: React.FC = () => {
       },
       {
         onSuccess: (data) => {
+          if (requestVersion !== routeRequestVersionRef.current) return;
           setCombinedResult(data);
           setRouteResult(data.route_analysis);
+          routeContext.setAnalysis(data.route_analysis);
+          setActiveAlternative(data.route_analysis.selected_route);
         },
       }
     );
@@ -327,8 +369,7 @@ export const RouteAnalysisPage: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => {
-                          setOriginCoords(null);
-                          setOriginText("");
+                          setOriginLocation(null);
                         }}
                         className="text-[11px] px-2 py-0.5 rounded text-slate-400 hover:text-slate-200 bg-slate-800"
                       >
@@ -354,7 +395,7 @@ export const RouteAnalysisPage: React.FC = () => {
                     type="text"
                     value={originText}
                     onChange={(e) => {
-                      setOriginText(e.target.value);
+                      editOriginText(e.target.value);
                       setActiveSearchTarget("origin");
                     }}
                     onFocus={() => setActiveSearchTarget("origin")}
@@ -376,8 +417,7 @@ export const RouteAnalysisPage: React.FC = () => {
                         key={`orig-${item.id}`}
                         type="button"
                         onClick={() => {
-                          setOriginCoords({ lat: item.lat, lng: item.lng, name: item.name });
-                          setOriginText(item.name);
+                          setOriginLocation({ lat: item.lat, lng: item.lng, name: item.name });
                           setActiveSearchTarget(null);
                         }}
                         className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800/80 border-b border-slate-800/50 flex flex-col"
@@ -402,8 +442,7 @@ export const RouteAnalysisPage: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => {
-                          setDestCoords(null);
-                          setDestText("");
+                          setDestinationLocation(null);
                         }}
                         className="text-[11px] px-2 py-0.5 rounded text-slate-400 hover:text-slate-200 bg-slate-800"
                       >
@@ -429,7 +468,7 @@ export const RouteAnalysisPage: React.FC = () => {
                     type="text"
                     value={destText}
                     onChange={(e) => {
-                      setDestText(e.target.value);
+                      editDestinationText(e.target.value);
                       setActiveSearchTarget("destination");
                     }}
                     onFocus={() => setActiveSearchTarget("destination")}
@@ -451,8 +490,7 @@ export const RouteAnalysisPage: React.FC = () => {
                         key={`dest-${item.id}`}
                         type="button"
                         onClick={() => {
-                          setDestCoords({ lat: item.lat, lng: item.lng, name: item.name });
-                          setDestText(item.name);
+                          setDestinationLocation({ lat: item.lat, lng: item.lng, name: item.name });
                           setActiveSearchTarget(null);
                         }}
                         className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800/80 border-b border-slate-800/50 flex flex-col"
@@ -477,19 +515,15 @@ export const RouteAnalysisPage: React.FC = () => {
                       type="button"
                       onClick={() => {
                         if (activeSearchTarget === "origin") {
-                          setOriginCoords(preset);
-                          setOriginText(preset.name);
+                          setOriginLocation(preset);
                         } else if (activeSearchTarget === "destination") {
-                          setDestCoords(preset);
-                          setDestText(preset.name);
+                          setDestinationLocation(preset);
                         } else if (!originCoords) {
-                          setOriginCoords(preset);
-                          setOriginText(preset.name);
+                          setOriginLocation(preset);
                         } else if (originCoords.name === preset.name) {
                           // Already set as origin, keep it
                         } else {
-                          setDestCoords(preset);
-                          setDestText(preset.name);
+                          setDestinationLocation(preset);
                         }
                       }}
                       className="px-2 py-1 rounded bg-slate-800/60 hover:bg-slate-800 text-[11px] text-slate-300 transition-colors"
@@ -732,7 +766,10 @@ export const RouteAnalysisPage: React.FC = () => {
             destination={destCoords}
             selectedRoute={activeAlternative || routeResult?.selected_route}
             alternatives={routeResult?.alternatives}
-            onSelectAlternative={(alt) => setActiveAlternative(alt)}
+            onSelectAlternative={(alt) => {
+              setActiveAlternative(alt);
+              routeContext.selectAlternative(alt);
+            }}
             roads={roads}
             intersections={intersections}
             zones={zones}
@@ -788,6 +825,8 @@ export const RouteAnalysisPage: React.FC = () => {
         {/* Route Analysis Results */}
         {(activeTab === "route" || activeTab === "integrated") && routeResult && (() => {
           const currentDisplayRoute = activeAlternative || routeResult.selected_route;
+          const currentCorridor = currentDisplayRoute.corridor || routeResult.corridor;
+          const currentPrediction = currentDisplayRoute.ai_prediction || routeResult.ai_prediction;
           return (
             <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-sm space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
@@ -840,26 +879,26 @@ export const RouteAnalysisPage: React.FC = () => {
               )}
 
               {/* Corridor Incidents Alert Banner */}
-              {Boolean(routeResult.corridor.active_incidents_count && routeResult.corridor.active_incidents_count > 0) && (
+              {Boolean(currentCorridor.active_incidents_count && currentCorridor.active_incidents_count > 0) && (
                 <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-950/20 flex items-start gap-3">
                   <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
                   <div className="space-y-1 text-xs">
                     <div className="flex items-center gap-2">
                       <span className="font-bold text-rose-300">
-                        {routeResult.corridor.active_incidents_count} Live Incident(s) Detected Along Route Corridor
+                        {currentCorridor.active_incidents_count} Live Incident(s) Detected Along Route Corridor
                       </span>
                       <span className="px-1.5 py-0.5 rounded bg-rose-900/60 text-rose-200 text-[10px] font-mono">
                         TomTom Traffic
                       </span>
                     </div>
-                    {routeResult.corridor.incident_delay_seconds ? (
+                    {currentCorridor.incident_delay_seconds ? (
                       <span className="text-slate-300 block">
-                        Cumulative traffic delay: +{Math.round(routeResult.corridor.incident_delay_seconds / 60)} min
+                        Cumulative traffic delay: +{Math.round(currentCorridor.incident_delay_seconds / 60)} min
                       </span>
                     ) : null}
-                    {routeResult.corridor.incidents_summary && routeResult.corridor.incidents_summary.length > 0 && (
+                    {currentCorridor.incidents_summary && currentCorridor.incidents_summary.length > 0 && (
                       <ul className="list-disc list-inside text-slate-300 pt-1 space-y-0.5">
-                        {routeResult.corridor.incidents_summary.map((summary, idx) => (
+                        {currentCorridor.incidents_summary.map((summary, idx) => (
                           <li key={idx}>{summary}</li>
                         ))}
                       </ul>
@@ -907,11 +946,11 @@ export const RouteAnalysisPage: React.FC = () => {
                 <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/60">
                   <span className="text-xs font-semibold text-slate-400 block">Corridor Samples</span>
                   <div className="text-2xl font-bold font-mono text-white mt-1">
-                    {routeResult.corridor.telemetry_sample_count} <span className="text-sm font-normal text-slate-400">events</span>
+                    {currentCorridor.telemetry_sample_count} <span className="text-sm font-normal text-slate-400">events</span>
                   </div>
                   <span className="text-[11px] text-emerald-400 font-mono">
-                    {routeResult.corridor.telemetry_status === "AVAILABLE"
-                      ? (routeResult.corridor.telemetry_source || "Live PostGIS stream")
+                    {currentCorridor.telemetry_status === "AVAILABLE"
+                      ? (currentCorridor.telemetry_source || "Live PostGIS stream")
                       : "Sensor unavailable"}
                   </span>
                 </div>
@@ -930,7 +969,10 @@ export const RouteAnalysisPage: React.FC = () => {
                         <button
                           key={`alt-card-${index}`}
                           type="button"
-                          onClick={() => setActiveAlternative(alt)}
+                          onClick={() => {
+                            setActiveAlternative(alt);
+                            routeContext.selectAlternative(alt);
+                          }}
                           className={`p-3 rounded-lg border text-left transition-all ${
                             isSelected
                               ? "border-blue-500 bg-blue-950/20 shadow-md shadow-blue-500/10"
@@ -977,8 +1019,8 @@ export const RouteAnalysisPage: React.FC = () => {
                   </h4>
 
                   <div className="space-y-2">
-                    {routeResult.corridor.matched_roads.length > 0 ? (
-                      routeResult.corridor.matched_roads.map((road) => (
+                    {currentCorridor.matched_roads.length > 0 ? (
+                      currentCorridor.matched_roads.map((road) => (
                         <div
                           key={road.road_id}
                           className="p-3 rounded-lg border border-slate-800/80 bg-slate-950/40 flex items-center justify-between text-xs"
@@ -998,7 +1040,7 @@ export const RouteAnalysisPage: React.FC = () => {
                       </div>
                     )}
 
-                    {routeResult.corridor.nearby_intersections.map((inter) => (
+                    {currentCorridor.nearby_intersections.map((inter) => (
                       <div
                         key={inter.intersection_id}
                         className="p-2.5 rounded-lg border border-indigo-900/40 bg-indigo-950/20 flex items-center justify-between text-xs"
@@ -1022,46 +1064,46 @@ export const RouteAnalysisPage: React.FC = () => {
                       <span className="text-xs font-semibold text-white">Production Predictor</span>
                       <span
                         className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          routeResult.ai_prediction.status === "AVAILABLE"
+                          currentPrediction.status === "AVAILABLE"
                             ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
                             : "bg-slate-800 text-slate-400"
                         }`}
                       >
-                        {routeResult.ai_prediction.status}
+                        {currentPrediction.status}
                       </span>
                     </div>
 
-                    {routeResult.ai_prediction.status === "AVAILABLE" ? (
+                    {currentPrediction.status === "AVAILABLE" ? (
                       <div className="space-y-3">
                         <div className="grid grid-cols-2 gap-2 text-xs">
                           <div className="bg-slate-900 p-2.5 rounded-lg">
                             <span className="text-slate-400 text-[10px] block">Predicted Congestion</span>
                             <span
                               className={`font-bold mt-0.5 inline-block px-1.5 py-0.5 rounded text-xs ${getCongestionBadgeClass(
-                                routeResult.ai_prediction.predicted_congestion || "LOW"
+                                currentPrediction.predicted_congestion || "LOW"
                               )}`}
                             >
-                              {routeResult.ai_prediction.predicted_congestion}
+                              {currentPrediction.predicted_congestion}
                             </span>
                           </div>
                           <div className="bg-slate-900 p-2.5 rounded-lg">
                             <span className="text-slate-400 text-[10px] block">Prediction Confidence</span>
                             <span className="font-mono font-bold text-white text-sm">
-                              {routeResult.ai_prediction.prediction_confidence != null
-                                ? `${(routeResult.ai_prediction.prediction_confidence * 100).toFixed(1)}%`
+                              {currentPrediction.prediction_confidence != null
+                                ? `${(currentPrediction.prediction_confidence * 100).toFixed(1)}%`
                                 : "Unavailable"}
                             </span>
                           </div>
                         </div>
 
                         <p className="text-xs text-slate-300 font-mono bg-slate-900/80 p-2.5 rounded-lg">
-                          {routeResult.ai_prediction.explanation}
+                          {currentPrediction.explanation}
                         </p>
                       </div>
                     ) : (
                       <div className="p-3 rounded-lg bg-slate-900/50 text-xs text-slate-400 space-y-1">
                         <span className="font-semibold text-slate-300 block">Insufficient Corridor Data</span>
-                        <p>{routeResult.ai_prediction.explanation}</p>
+                        <p>{currentPrediction.explanation}</p>
                       </div>
                     )}
                   </div>

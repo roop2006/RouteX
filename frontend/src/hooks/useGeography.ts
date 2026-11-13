@@ -3,19 +3,21 @@ import { getRoads } from "../api/roads";
 import { getIntersections } from "../api/intersections";
 import { getZones, getNearbyEvents, type NearbyEventsParams } from "../api/geography";
 
-export function useRoads() {
+export function useRoads(enabled = true) {
   return useQuery({
     queryKey: ["roads"],
     queryFn: getRoads,
     staleTime: 60000,
+    enabled,
   });
 }
 
-export function useIntersections() {
+export function useIntersections(enabled = true) {
   return useQuery({
     queryKey: ["intersections"],
     queryFn: getIntersections,
     staleTime: 60000,
+    enabled,
   });
 }
 

@@ -36,7 +36,12 @@ export const LiveTrafficPage: React.FC = () => {
     dataUpdatedAt,
   } = useLiveTraffic({ pollingEnabled: !isPollingPaused });
 
-  const { data: incidentsData, isFetching: isFetchingIncidents } = useLiveIncidents();
+  const {
+    data: incidentsData,
+    isFetching: isFetchingIncidents,
+    error: incidentsError,
+    refetch: refetchIncidents,
+  } = useLiveIncidents();
 
   const handleTogglePolling = () => {
     setIsPollingPaused((prev) => !prev);
@@ -47,7 +52,7 @@ export const LiveTrafficPage: React.FC = () => {
   const congestion = liveTraffic?.congestion_level || "UNKNOWN";
   const isTomTom = liveTraffic?.source === "tomtom_traffic_flow";
   const sourceLabel = isTomTom
-    ? "TomTom Live Traffic"
+    ? liveTraffic?.freshness === "FRESH" ? "TomTom Live Traffic" : "TomTom Cached Snapshot"
     : liveTraffic?.source === "redis_live_stream"
     ? "Redis Live Buffer"
     : liveTraffic?.source === "database_stream_telemetry"
@@ -104,6 +109,18 @@ export const LiveTrafficPage: React.FC = () => {
         }
       />
 
+      {liveTraffic?.provider_error && (
+        <div
+          role="status"
+          className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-3 text-sm text-amber-200"
+        >
+          TomTom live flow is unavailable: {liveTraffic.provider_error}
+          {liveTraffic.source && liveTraffic.source !== "none" && (
+            <span className="text-amber-100/80"> Showing {sourceLabel.toLowerCase()} data.</span>
+          )}
+        </div>
+      )}
+
       {/* Stream Architecture Clarification Banner */}
       <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-xs text-slate-400 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
@@ -126,7 +143,6 @@ export const LiveTrafficPage: React.FC = () => {
         <ErrorState
           title="Live Traffic Stream Unavailable"
           error={error}
-          message="Unable to fetch live traffic snapshot from the backend. Upstream sensors may be offline."
           onRetry={() => refetch()}
         />
       ) : !liveTraffic || liveTraffic.status === "UNAVAILABLE" ? (
@@ -141,6 +157,8 @@ export const LiveTrafficPage: React.FC = () => {
         <div className="space-y-6">
           {/* Stale Data Notice */}
           {(isPollingPaused ||
+            liveTraffic.freshness === "STALE" ||
+            liveTraffic.freshness === "HISTORICAL" ||
             (liveTraffic.timestamp &&
               dataUpdatedAt > 0 &&
               dataUpdatedAt - new Date(liveTraffic.timestamp).getTime() > 5 * 60 * 1000)) && (
@@ -369,7 +387,14 @@ export const LiveTrafficPage: React.FC = () => {
               </div>
             </div>
 
-            {incidentsData && incidentsData.incidents && incidentsData.incidents.length > 0 ? (
+            {incidentsError ? (
+              <ErrorState
+                title="Live Incident Request Failed"
+                error={incidentsError}
+                onRetry={() => refetchIncidents()}
+                className="p-4"
+              />
+            ) : incidentsData && incidentsData.incidents && incidentsData.incidents.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {incidentsData.incidents.slice(0, 6).map((inc) => (
                   <div

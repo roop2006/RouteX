@@ -17,6 +17,7 @@ import { useLivePrediction } from "../../hooks/useLiveTraffic";
 import { formatTimestamp, formatTimeOnly } from "../../utils/formatters";
 import { getCongestionBadgeClass } from "../../utils/congestion";
 import type { TrafficPredictionRequest, PredictionResponse } from "../../types/prediction";
+import { useSelectedRoute } from "../../contexts/selectedRouteContext";
 
 export const PredictionsPage: React.FC = () => {
   // Manual Prediction Form State
@@ -32,6 +33,8 @@ export const PredictionsPage: React.FC = () => {
 
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [manualResult, setManualResult] = useState<PredictionResponse | null>(null);
+  const routeContext = useSelectedRoute();
+  const routePrediction = routeContext.selectedRoute?.ai_prediction;
 
   // Queries & Mutations
   const { data: livePrediction, isLoading: isLoadingLive, error: liveError } = useLivePrediction();
@@ -116,6 +119,32 @@ export const PredictionsPage: React.FC = () => {
             <span className="text-[10px] text-slate-400">explained variance</span>
           </div>
         </div>
+      )}
+
+      {/* Live Continuous Inference Banner */}
+      {routeContext.analysis && routeContext.selectedRoute && routePrediction && (
+        <section className="rounded-xl border border-purple-500/30 bg-purple-950/20 p-5 space-y-3" aria-label="Selected route AI prediction">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-purple-900/50 pb-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-purple-300" />
+              <h3 className="text-base font-semibold text-white">Selected Route Prediction</h3>
+            </div>
+            <span className="text-[11px] text-slate-400">{routeContext.selectedRoute.distance_km} km â€¢ calculated {formatTimeOnly(routeContext.calculatedAt || "")}</span>
+          </div>
+          <div className="text-xs text-slate-300">
+            {routeContext.origin?.name || "Origin"} â†’ {routeContext.destination?.name || "Destination"}
+          </div>
+          {routePrediction.status === "AVAILABLE" ? (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-800"><span className="text-slate-400 block">Predicted congestion</span><strong className="text-white">{routePrediction.predicted_congestion || "Unavailable"}</strong></div>
+              <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-800"><span className="text-slate-400 block">Predicted volume</span><strong className="text-white">{routePrediction.predicted_vehicle_count == null ? "Unavailable" : `${Math.round(routePrediction.predicted_vehicle_count)} vehicles`}</strong></div>
+              <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-800"><span className="text-slate-400 block">Confidence</span><strong className="text-white">{routePrediction.prediction_confidence == null ? "Unavailable" : `${(routePrediction.prediction_confidence * 100).toFixed(1)}%`}</strong></div>
+              <p className="sm:col-span-3 text-slate-400">{routePrediction.explanation}</p>
+            </div>
+          ) : (
+            <p className="text-xs text-amber-300">Route prediction is {routePrediction.status}: {routePrediction.explanation}</p>
+          )}
+        </section>
       )}
 
       {/* Live Continuous Inference Banner */}

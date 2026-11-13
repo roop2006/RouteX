@@ -16,22 +16,36 @@ class RouteAnalysisRequest(BaseModel):
     mode: str = Field(default="driving", description="Travel mode (driving)")
 
 
-class RouteAlternative(BaseModel):
-    summary: str
-    distance_meters: float
-    distance_km: float
-    free_flow_duration_seconds: float
-    free_flow_duration_minutes: float
-    traffic_duration_seconds: Optional[float] = None
-    traffic_duration_minutes: Optional[float] = None
-    delay_minutes: Optional[float] = None
+class RouteAIExplanation(BaseModel):
+    status: str  # "AVAILABLE" | "INSUFFICIENT_DATA"
+    model_name: Optional[str] = None
+    predicted_congestion: Optional[str] = None
+    prediction_confidence: Optional[float] = None
+    predicted_vehicle_count: Optional[float] = None
+    features_used: Optional[dict[str, Any]] = None
+    explanation: str
+
+
+class RouteTrafficObservation(BaseModel):
+    id: int
+    intersection_id: Optional[str] = None
+    latitude: float
+    longitude: float
+    total_vehicles: int
+    vehicle_types: dict[str, float] = Field(default_factory=dict)
+    lane_counts: dict[str, float] = Field(default_factory=dict)
+    direction_counts: dict[str, float] = Field(default_factory=dict)
+    average_speed: float
+    free_flow_speed: Optional[float] = None
+    density: float
     congestion_level: str
-    geometry: dict[str, Any]  # GeoJSON LineString
-    corridor_data_status: str  # "LIVE_TELEMETRY" | "HISTORICAL_TELEMETRY" | "NO_TELEMETRY"
-    rank: int = 1
-    is_recommended: bool = False
-    recommendation_reason: Optional[str] = None
-    incidents_count: int = 0
+    timestamp: datetime
+    source: str
+    event_type: Optional[str] = None
+    severity: Optional[int] = None
+    description: Optional[str] = None
+    delay_seconds: Optional[float] = None
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class CorridorRoadMatch(BaseModel):
@@ -39,6 +53,15 @@ class CorridorRoadMatch(BaseModel):
     road_name: str
     speed_limit: float
     lanes: int
+    geometry: Optional[dict[str, Any]] = None
+    length_meters: Optional[float] = None
+    distance_to_route_meters: Optional[float] = None
+    match_relation: str = "NEARBY"
+    observed_average_speed: Optional[float] = None
+    observed_congestion: Optional[str] = None
+    observation_count: int = 0
+    last_observation_at: Optional[datetime] = None
+    observation_source: Optional[str] = None
 
 
 class CorridorIntersectionMatch(BaseModel):
@@ -46,6 +69,13 @@ class CorridorIntersectionMatch(BaseModel):
     name: str
     latitude: float
     longitude: float
+    distance_to_route_meters: Optional[float] = None
+    associated_road_ids: list[str] = Field(default_factory=list)
+    observed_average_speed: Optional[float] = None
+    observed_congestion: Optional[str] = None
+    observation_count: int = 0
+    last_observation_at: Optional[datetime] = None
+    observation_source: Optional[str] = None
 
 
 class CorridorZoneMatch(BaseModel):
@@ -58,26 +88,43 @@ class CorridorDetail(BaseModel):
     matched_roads: list[CorridorRoadMatch]
     nearby_intersections: list[CorridorIntersectionMatch]
     traversed_zones: list[CorridorZoneMatch]
+    traffic_observations: list[RouteTrafficObservation] = Field(default_factory=list)
     telemetry_status: str  # "AVAILABLE" | "UNAVAILABLE"
     telemetry_sample_count: int
     observed_average_speed: Optional[float] = None
+    observed_free_flow_speed: Optional[float] = None
+    observed_total_vehicles: Optional[float] = None
     observed_density: Optional[float] = None
     observed_congestion: Optional[str] = None
     speed_limit_reference: Optional[float] = None
+    latest_observation_at: Optional[datetime] = None
+    observation_age_seconds: Optional[float] = None
+    observation_freshness: str = "UNAVAILABLE"
     active_incidents_count: int = 0
     incident_delay_seconds: float = 0.0
     telemetry_source: Optional[str] = None
-    incidents_summary: list[str] = []
+    incidents_summary: list[str] = Field(default_factory=list)
 
 
-class RouteAIExplanation(BaseModel):
-    status: str  # "AVAILABLE" | "INSUFFICIENT_DATA"
-    model_name: Optional[str] = None
-    predicted_congestion: Optional[str] = None
-    prediction_confidence: Optional[float] = None
-    predicted_vehicle_count: Optional[float] = None
-    features_used: Optional[dict[str, Any]] = None
-    explanation: str
+class RouteAlternative(BaseModel):
+    route_id: str
+    summary: str
+    distance_meters: float
+    distance_km: float
+    free_flow_duration_seconds: float
+    free_flow_duration_minutes: float
+    traffic_duration_seconds: Optional[float] = None
+    traffic_duration_minutes: Optional[float] = None
+    delay_minutes: Optional[float] = None
+    congestion_level: str
+    geometry: dict[str, Any]  # GeoJSON LineString
+    corridor_data_status: str  # "LIVE_TELEMETRY" | "HISTORICAL_TELEMETRY" | "NO_TELEMETRY"
+    corridor: Optional[CorridorDetail] = None
+    ai_prediction: Optional[RouteAIExplanation] = None
+    rank: int = 1
+    is_recommended: bool = False
+    recommendation_reason: Optional[str] = None
+    incidents_count: int = 0
 
 
 class RouteAnalysisResponse(BaseModel):
@@ -126,10 +173,10 @@ class VideoAnalysisResult(BaseModel):
     duration_seconds: float
     fps: float
     total_vehicles_detected: int
-    vehicle_types: dict[str, float | int]
-    lane_counts: dict[str, float | int]
-    direction_counts: dict[str, float | int]
-    line_crossing_counts: dict[str, float | int] = Field(default_factory=dict)
+    vehicle_types: dict[str, float]
+    lane_counts: dict[str, float]
+    direction_counts: dict[str, float]
+    line_crossing_counts: dict[str, float] = Field(default_factory=dict)
     line_crossing_total: int = 0
     average_speed: float
     density: float

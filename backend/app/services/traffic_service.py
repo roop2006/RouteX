@@ -1,3 +1,5 @@
+from datetime import timezone
+
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -24,6 +26,21 @@ def create_traffic_event(
         db.add(db_event)
         db.commit()
         db.refresh(db_event)
+
+        try:
+            from backend.app.services.alert_service import process_alert_event
+            first_metadata = next((item for item in (event.events or []) if isinstance(item, dict)), {})
+            process_alert_event(db, {
+                **event.model_dump(),
+                "source": first_metadata.get("source", "traffic_events_api"),
+                "source_event_id": first_metadata.get("id") or first_metadata.get("source_event_id")
+                    or f"traffic-event:{db_event.id}",
+                "timestamp": first_metadata.get("timestamp") or db_event.timestamp.replace(tzinfo=timezone.utc),
+            })
+        except Exception:
+            # The existing traffic event remains committed if alerting is unavailable.
+            import logging
+            logging.getLogger(__name__).exception("Traffic event stored; alert generation failed")
 
         return db_event
 

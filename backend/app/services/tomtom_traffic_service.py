@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import threading
+import time
 from typing import Any, Optional
 
 from geoalchemy2.elements import WKTElement
@@ -69,6 +70,19 @@ class TomTomTrafficService:
         self._incidents_cache: dict[str, tuple[list[dict[str, Any]], datetime]] = {}
         self._tile_cache: dict[str, tuple[bytes, datetime]] = {}
         self._lock = threading.Lock()
+        self._flow_inflight: dict[str, threading.Event] = {}
+        self._incident_inflight: dict[str, threading.Event] = {}
+        self._http_client = httpx.Client(
+            timeout=httpx.Timeout(connect=2.0, read=4.0, write=2.0, pool=1.0),
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            trust_env=True,
+        )
+        self.last_flow_error: Optional[str] = None
+        self.last_incident_error: Optional[str] = None
+        self.last_flow_checked_at: Optional[datetime] = None
+        self.last_incident_checked_at: Optional[datetime] = None
+        self.flow_connectivity_status = "unverified"
+        self.incident_connectivity_status = "unverified"
 
         # Telemetry and circuit breaker
         self._circuit_breaker_until: Optional[datetime] = None
@@ -93,6 +107,12 @@ class TomTomTrafficService:
             return "***"
         return f"{self.api_key[:4]}...{self.api_key[-4:]}"
 
+    def _safe_request_error(self, operation: str, error: Exception) -> str:
+        message = str(error)
+        if self.api_key:
+            message = message.replace(self.api_key, "***")
+        return f"TomTom {operation} request failed: {message or error.__class__.__name__}"
+
     def _is_rate_limited(self) -> bool:
         """Checks whether the circuit breaker is active after an HTTP 429."""
         if self._circuit_breaker_until and datetime.now() < self._circuit_breaker_until:
@@ -107,6 +127,29 @@ class TomTomTrafficService:
         logger.warning(
             f"TomTom API rate limit encountered. Pausing external requests for {seconds}s."
         )
+
+    def _request_with_retry(self, url: str, params: dict[str, Any], operation: str):
+        """Reuse pooled connections and retry transient network/gateway errors once."""
+        for attempt in range(2):
+            try:
+                response = self._http_client.get(url, params=params)
+                if response.status_code not in (502, 503, 504) or attempt == 1:
+                    return response
+            except (httpx.TimeoutException, httpx.NetworkError):
+                if attempt == 1:
+                    raise
+            time.sleep(0.2 * (attempt + 1))
+        raise RuntimeError(f"TomTom {operation} request did not complete")
+
+    @staticmethod
+    def _cache_age(data: dict[str, Any], now: datetime) -> int | None:
+        try:
+            retrieved = datetime.fromisoformat(str(data["retrieved_at"]).replace("Z", "+00:00"))
+            if retrieved.tzinfo is not None:
+                retrieved = retrieved.replace(tzinfo=None)
+            return max(0, int((now - retrieved).total_seconds()))
+        except (KeyError, TypeError, ValueError):
+            return None
 
     # -------------------------------------------------------------------------
     # 1. Traffic Flow Segment Data (Point-based Road Inspection)
@@ -124,6 +167,7 @@ class TomTomTrafficService:
         Uses coordinate rounding (3 decimals ~ 110m) and TTL caching.
         """
         if not self.is_configured:
+            self.last_flow_error = "TOMTOM_API_KEY is not configured."
             return None
 
         # Round coordinates for high-efficiency cache reuse
@@ -132,29 +176,58 @@ class TomTomTrafficService:
         cache_key = f"{grid_lat}:{grid_lng}:{zoom}:{style}"
 
         now = datetime.now()
+        stale_data = None
+        wait_for: threading.Event | None = None
+        owner_event: threading.Event | None = None
         with self._lock:
             if cache_key in self._flow_cache:
                 data, expire_at = self._flow_cache[cache_key]
                 if now < expire_at:
                     self.stats["cache_hits"] += 1
-                    return data
+                    self.last_flow_error = None
+                    return {**data, "freshness": "CACHED", "cache_age_seconds": self._cache_age(data, now)}
                 else:
-                    del self._flow_cache[cache_key]
+                    stale_data = data
+                    if (self._cache_age(stale_data, now) or 0) > 3600:
+                        self._flow_cache.pop(cache_key, None)
+                        stale_data = None
+            if cache_key in self._flow_inflight:
+                wait_for = self._flow_inflight[cache_key]
+            else:
+                owner_event = threading.Event()
+                self._flow_inflight[cache_key] = owner_event
 
-        if self._is_rate_limited():
-            logger.debug("TomTom request suppressed by active circuit breaker.")
+        if wait_for is not None:
+            wait_for.wait(timeout=8.5)
+            with self._lock:
+                cached = self._flow_cache.get(cache_key)
+            if cached and datetime.now() < cached[1]:
+                self.stats["cache_hits"] += 1
+                return {**cached[0], "freshness": "CACHED", "cache_age_seconds": self._cache_age(cached[0], datetime.now())}
+            stale_data = cached[0] if cached else stale_data
+            if stale_data and (self._cache_age(stale_data, datetime.now()) or 0) <= 3600:
+                return {**stale_data, "freshness": "STALE", "cache_age_seconds": self._cache_age(stale_data, datetime.now())}
+            self.last_flow_error = "A concurrent TomTom flow request did not populate the cache."
             return None
 
-        url = f"{self.base_url}/traffic/services/4/flowSegmentData/{style}/{zoom}/json"
-        params = {
-            "point": f"{lat},{lng}",
-            "key": self.api_key,
-        }
-
         try:
+            if self._is_rate_limited():
+                logger.debug("TomTom request suppressed by active circuit breaker.")
+                self.last_flow_error = "TomTom rate limit is active; retry after the provider backoff period."
+                if stale_data and (self._cache_age(stale_data, now) or 0) <= 3600:
+                    return {**stale_data, "freshness": "STALE", "cache_age_seconds": self._cache_age(stale_data, now)}
+                return None
+
+            url = f"{self.base_url}/traffic/services/4/flowSegmentData/{style}/{zoom}/json"
+            params = {
+                "point": f"{lat},{lng}",
+                "key": self.api_key,
+            }
+
             self.stats["total_requests"] += 1
-            with httpx.Client(timeout=7.0) as client:
-                resp = client.get(url, params=params)
+            self.last_flow_checked_at = now
+            resp = self._request_with_retry(url, params, "traffic flow")
+            self.flow_connectivity_status = "available" if resp.status_code == 200 else "unavailable"
 
             if resp.status_code == 200:
                 raw = resp.json()
@@ -204,33 +277,51 @@ class TomTomTrafficService:
                 }
 
                 with self._lock:
+                    for expired_key, (_, expiry) in list(self._flow_cache.items()):
+                        if now >= expiry and expired_key != cache_key:
+                            self._flow_cache.pop(expired_key, None)
                     self._flow_cache[cache_key] = (
                         normalized,
                         now + timedelta(seconds=self.cache_ttl),
                     )
 
+                self.last_flow_error = None
                 return normalized
 
             elif resp.status_code == 429:
                 self._trigger_backoff(60)
+                self.last_flow_error = "TomTom traffic flow returned HTTP 429 (rate limited)."
                 return None
             elif resp.status_code in (401, 403):
                 logger.error(
                     f"TomTom authentication/permission failure ({resp.status_code}) using key {self.masked_key}."
                 )
                 self.stats["errors"] += 1
+                self.last_flow_error = f"TomTom authentication/permission failure (HTTP {resp.status_code})."
                 return None
             else:
                 logger.warning(
                     f"TomTom flowSegmentData query failed with status {resp.status_code}: {resp.text[:120]}"
                 )
                 self.stats["errors"] += 1
+                self.last_flow_error = f"TomTom traffic flow returned HTTP {resp.status_code}."
+                if stale_data and (self._cache_age(stale_data, now) or 0) <= 3600:
+                    return {**stale_data, "freshness": "STALE", "cache_age_seconds": self._cache_age(stale_data, now)}
                 return None
 
         except Exception as exc:
-            logger.warning(f"TomTom flowSegmentData request error: {exc}")
+            self.flow_connectivity_status = "unavailable"
+            self.last_flow_error = self._safe_request_error("traffic flow", exc)
+            logger.warning(self.last_flow_error)
             self.stats["errors"] += 1
+            if stale_data and (self._cache_age(stale_data, now) or 0) <= 3600:
+                return {**stale_data, "freshness": "STALE", "cache_age_seconds": self._cache_age(stale_data, now)}
             return None
+        finally:
+            if owner_event is not None:
+                with self._lock:
+                    self._flow_inflight.pop(cache_key, None)
+                    owner_event.set()
 
     # -------------------------------------------------------------------------
     # 2. Traffic Incidents Details (Bounding Box Corridor Query)
@@ -248,6 +339,7 @@ class TomTomTrafficService:
         within the specified bounding box.
         """
         if not self.is_configured:
+            self.last_incident_error = "TOMTOM_API_KEY is not configured."
             return []
 
         # Round bbox to ~1km grid for cache reuse
@@ -258,36 +350,54 @@ class TomTomTrafficService:
         cache_key = f"{grid_min_lng}:{grid_min_lat}:{grid_max_lng}:{grid_max_lat}:{language}"
 
         now = datetime.now()
+        wait_for: threading.Event | None = None
+        owner_event: threading.Event | None = None
         with self._lock:
             if cache_key in self._incidents_cache:
                 data, expire_at = self._incidents_cache[cache_key]
                 if now < expire_at:
                     self.stats["cache_hits"] += 1
+                    self.last_incident_error = None
                     return data
-                else:
-                    del self._incidents_cache[cache_key]
+            if cache_key in self._incident_inflight:
+                wait_for = self._incident_inflight[cache_key]
+            else:
+                owner_event = threading.Event()
+                self._incident_inflight[cache_key] = owner_event
 
-        if self._is_rate_limited():
+        if wait_for is not None:
+            wait_for.wait(timeout=10.0)
+            with self._lock:
+                cached = self._incidents_cache.get(cache_key)
+            if cached and datetime.now() < cached[1]:
+                self.stats["cache_hits"] += 1
+                return cached[0]
+            self.last_incident_error = "A concurrent TomTom incident request did not populate the cache."
             return []
 
-        url = f"{self.base_url}/traffic/services/5/incidentDetails"
-        fields = (
-            "{incidents{type,geometry{type,coordinates},"
-            "properties{id,iconCategory,magnitudeOfDelay,events{description,code},"
-            "startTime,endTime,from,to,length,delay,roadNumbers}}}"
-        )
-        params = {
-            "bbox": f"{min_lng},{min_lat},{max_lng},{max_lat}",
-            "fields": fields,
-            "language": language,
-            "timeValidityFilter": "present",
-            "key": self.api_key,
-        }
-
         try:
+            if self._is_rate_limited():
+                self.last_incident_error = "TomTom rate limit is active; retry after the provider backoff period."
+                return []
+
+            url = f"{self.base_url}/traffic/services/5/incidentDetails"
+            fields = (
+                "{incidents{type,geometry{type,coordinates},"
+                "properties{id,iconCategory,magnitudeOfDelay,events{description,code},"
+                "startTime,endTime,from,to,length,delay,roadNumbers}}}"
+            )
+            params = {
+                "bbox": f"{min_lng},{min_lat},{max_lng},{max_lat}",
+                "fields": fields,
+                "language": language,
+                "timeValidityFilter": "present",
+                "key": self.api_key,
+            }
+
             self.stats["total_requests"] += 1
-            with httpx.Client(timeout=8.0) as client:
-                resp = client.get(url, params=params)
+            self.last_incident_checked_at = now
+            resp = self._request_with_retry(url, params, "incidents")
+            self.incident_connectivity_status = "available" if resp.status_code == 200 else "unavailable"
 
             if resp.status_code == 200:
                 raw = resp.json()
@@ -342,25 +452,42 @@ class TomTomTrafficService:
                     })
 
                 with self._lock:
+                    for expired_key, (_, expiry) in list(self._incidents_cache.items()):
+                        if now >= expiry and expired_key != cache_key:
+                            self._incidents_cache.pop(expired_key, None)
                     self._incidents_cache[cache_key] = (
                         parsed_incidents,
                         now + timedelta(seconds=self.incidents_ttl),
                     )
 
+                self.last_incident_error = None
                 return parsed_incidents
 
             elif resp.status_code == 429:
                 self._trigger_backoff(60)
+                self.last_incident_error = "TomTom incident service returned HTTP 429 (rate limited)."
+                return []
+            elif resp.status_code in (401, 403):
+                self.last_incident_error = f"TomTom authentication/permission failure (HTTP {resp.status_code})."
+                self.stats["errors"] += 1
                 return []
             else:
                 logger.warning(f"TomTom incidentDetails returned status {resp.status_code}")
                 self.stats["errors"] += 1
+                self.last_incident_error = f"TomTom incident service returned HTTP {resp.status_code}."
                 return []
 
         except Exception as exc:
-            logger.warning(f"TomTom incidentDetails error: {exc}")
+            self.incident_connectivity_status = "unavailable"
+            self.last_incident_error = self._safe_request_error("incident", exc)
+            logger.warning(self.last_incident_error)
             self.stats["errors"] += 1
             return []
+        finally:
+            if owner_event is not None:
+                with self._lock:
+                    self._incident_inflight.pop(cache_key, None)
+                    owner_event.set()
 
     # -------------------------------------------------------------------------
     # 3. Raster and Vector Tiles (Traffic Flow & Incidents)
@@ -411,8 +538,7 @@ class TomTomTrafficService:
 
         try:
             self.stats["total_requests"] += 1
-            with httpx.Client(timeout=6.0) as client:
-                resp = client.get(url, params=params)
+            resp = self._request_with_retry(url, params, "map tile")
 
             if resp.status_code == 200:
                 tile_bytes = resp.content
@@ -473,13 +599,14 @@ class TomTomTrafficService:
         with ThreadPoolExecutor(max_workers=min(len(sample_indices) or 1, 5)) as executor:
             raw_flow_results = list(executor.map(_fetch_point, sample_indices))
         flow_observations = [f for f in raw_flow_results if f is not None]
+        persistable_flow = [f for f in flow_observations if f.get("freshness", "FRESH") == "FRESH"]
 
         # 3. Query incident details for the corridor bbox
         corridor_incidents = self.get_incident_details(min_lng, min_lat, max_lng, max_lat)
 
         # 4. Persist flow observations to PostGIS (traffic_stream_events)
         ingested_events: list[TrafficStreamEvent] = []
-        for flow in flow_observations:
+        for flow in persistable_flow:
             f_lat = flow["latitude"]
             f_lng = flow["longitude"]
 
@@ -588,9 +715,30 @@ class TomTomTrafficService:
         if ingested_events:
             try:
                 db.commit()
+                from backend.app.services.alert_service import process_alert_event
+                for event in ingested_events:
+                    db.refresh(event)
+                    metadata = event.events[0] if isinstance(event.events, list) and event.events else {}
+                    event_source_id = metadata.get("incident_id") or f"tomtom-flow:{event.id}"
+                    process_alert_event(db, {
+                        "source": metadata.get("source", "tomtom_traffic_flow"),
+                        "source_event_id": event_source_id,
+                        "timestamp": event.timestamp,
+                        "intersection_id": event.intersection_id,
+                        "latitude": event.latitude,
+                        "longitude": event.longitude,
+                        "total_vehicles": event.total_vehicles,
+                        "average_speed": event.average_speed,
+                        "free_flow_speed": metadata.get("free_flow_speed"),
+                        "density": event.density,
+                        "congestion_level": event.congestion_level,
+                        "delay_seconds": metadata.get("delay_seconds"),
+                        "road_closure": metadata.get("road_closure", False),
+                        "events": event.events or [],
+                    })
             except Exception as commit_err:
                 db.rollback()
-                logger.warning(f"Failed to commit TomTom corridor stream events: {commit_err}")
+                logger.warning("TomTom corridor persisted; alert evaluation or follow-up failed: %s", commit_err)
 
         return {
             "flow_count": len(flow_observations),
@@ -648,6 +796,12 @@ class TomTomTrafficService:
             else 0.0
         )
         total_delay = sum(j.get("delay_seconds", 0.0) for j in junction_metrics)
+        provider_errors = [
+            error
+            for error in (self.last_flow_error, self.last_incident_error)
+            if error
+        ]
+        provider_error = "; ".join(dict.fromkeys(provider_errors)) or None
 
         return {
             "status": "ACTIVE" if junction_metrics else "UNAVAILABLE",
@@ -660,7 +814,12 @@ class TomTomTrafficService:
             "active_incidents_count": len(incidents),
             "junctions": junction_metrics,
             "incidents": incidents[:10],  # top 10 most relevant incidents
-            "message": f"Live telemetry from TomTom across {len(junction_metrics)} arterial hubs in Chennai.",
+            "provider_error": provider_error,
+            "message": (
+                f"Live telemetry from TomTom across {len(junction_metrics)} arterial hubs in Chennai."
+                if not provider_error
+                else f"TomTom live traffic request failed: {provider_error}"
+            ),
         }
 
 

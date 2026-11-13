@@ -48,12 +48,14 @@ class LiveTrafficService:
             redis_data = self.redis_client.get_latest()
             if redis_data and isinstance(redis_data, dict):
                 redis_data.setdefault("source", "redis_live_stream")
-                redis_data.setdefault("status", "ACTIVE")
+                redis_data.setdefault("freshness", "FRESH")
+                redis_data.setdefault("status", "ACTIVE" if redis_data["freshness"] == "FRESH" else "CACHED_STREAM")
                 return redis_data
         except (redis.exceptions.RedisError, ConnectionError, TimeoutError, Exception) as err:
             logger.debug(f"Redis live stream read skipped / unavailable: {err}")
 
         # Tier 2: Check TomTom Live Traffic API (External Live Data Provider)
+        tomtom_provider_error: Optional[str] = None
         try:
             from backend.app.services.tomtom_traffic_service import tomtom_traffic_service
             if tomtom_traffic_service.is_configured:
@@ -63,7 +65,7 @@ class LiveTrafficService:
                 if tomtom_flow:
                     est_veh = int(12 + (30 * tomtom_flow["density"]))
                     tt_payload = {
-                        "status": "ACTIVE",
+                        "status": "ACTIVE" if tomtom_flow.get("freshness", "FRESH") == "FRESH" else "CACHED_STREAM",
                         "source": "tomtom_traffic_flow",
                         "provider": "TomTom Traffic API",
                         "timestamp": tomtom_flow.get("retrieved_at", datetime.now().isoformat()),
@@ -89,11 +91,51 @@ class LiveTrafficService:
                             "free_flow_travel_time": tomtom_flow["free_flow_travel_time"],
                         },
                         "events": [tomtom_flow],
+                        "freshness": tomtom_flow.get("freshness", "FRESH"),
+                        "cache_age_seconds": tomtom_flow.get("cache_age_seconds", 0),
+                        "provider_error": tomtom_traffic_service.last_flow_error,
                         "message": "Real-time traffic flow retrieved from TomTom Traffic API.",
                     }
+                    if tt_payload["freshness"] != "FRESH":
+                        tt_payload["status"] = "CACHED_STREAM"
+                        tt_payload["message"] = (
+                            "TomTom is unavailable; serving a stale cached traffic flow snapshot."
+                            if tt_payload["freshness"] == "STALE"
+                            else "Serving a recently cached TomTom traffic flow snapshot."
+                        )
+                    else:
+                        owns_alert_session = db is None
+                        alert_db = SessionLocal() if owns_alert_session else db
+                        try:
+                            from backend.app.services.alert_service import process_alert_event
+                            process_alert_event(alert_db, {
+                                "source": "tomtom_traffic_flow",
+                                "source_event_id": f"tomtom-flow-live:{DEFAULT_INTERSECTION_ID}:{tt_payload['timestamp']}",
+                                "timestamp": tt_payload["timestamp"],
+                                "intersection_id": DEFAULT_INTERSECTION_ID,
+                                "latitude": DEFAULT_CAMERA_LATITUDE,
+                                "longitude": DEFAULT_CAMERA_LONGITUDE,
+                                "total_vehicles": est_veh,
+                                "average_speed": tomtom_flow["current_speed"],
+                                "free_flow_speed": tomtom_flow["free_flow_speed"],
+                                "density": tomtom_flow["density"],
+                                "congestion_level": tomtom_flow["congestion_level"],
+                                "delay_seconds": tomtom_flow["delay_seconds"],
+                                "road_closure": tomtom_flow["road_closure"],
+                                "events": [tomtom_flow],
+                            })
+                        except Exception as alert_error:
+                            logger.warning("Fresh TomTom flow retrieved; alert evaluation skipped: %s", alert_error)
+                        finally:
+                            if owns_alert_session:
+                                alert_db.close()
                     return tt_payload
+                tomtom_provider_error = tomtom_traffic_service.last_flow_error
+            else:
+                tomtom_provider_error = "TOMTOM_API_KEY is not configured."
         except Exception as tt_err:
             logger.debug(f"TomTom live traffic retrieval skipped: {tt_err}")
+            tomtom_provider_error = f"TomTom live traffic retrieval failed: {tt_err}"
 
         # Tier 3: Fallback to latest database stream observation
         owns_session = False
@@ -118,14 +160,22 @@ class LiveTrafficService:
                 source_meta = "database_stream_telemetry"
                 if isinstance(latest_db_event.events, dict) and latest_db_event.events.get("source"):
                     source_meta = latest_db_event.events["source"]
+                elif isinstance(latest_db_event.events, list) and latest_db_event.events:
+                    first_event = latest_db_event.events[0]
+                    if isinstance(first_event, dict) and first_event.get("source"):
+                        source_meta = first_event["source"]
+
+                event_time = latest_db_event.timestamp
+                age_seconds = max(0, int((datetime.now() - event_time).total_seconds())) if event_time else None
+                freshness = "UNAVAILABLE" if age_seconds is None else "FRESH" if age_seconds <= 30 else "RECENT" if age_seconds <= 300 else "HISTORICAL"
 
                 return {
                     "status": "CACHED_STREAM",
                     "source": source_meta,
                     "timestamp": ts_iso,
                     "intersection_id": latest_db_event.intersection_id or DEFAULT_INTERSECTION_ID,
-                    "latitude": latest_db_event.latitude or DEFAULT_CAMERA_LATITUDE,
-                    "longitude": latest_db_event.longitude or DEFAULT_CAMERA_LONGITUDE,
+                    "latitude": latest_db_event.latitude if latest_db_event.latitude is not None else DEFAULT_CAMERA_LATITUDE,
+                    "longitude": latest_db_event.longitude if latest_db_event.longitude is not None else DEFAULT_CAMERA_LONGITUDE,
                     "total_vehicles": latest_db_event.total_vehicles,
                     "average_speed": round(float(latest_db_event.average_speed or 0.0), 1),
                     "density": round(float(latest_db_event.density or 0.0), 3),
@@ -134,7 +184,10 @@ class LiveTrafficService:
                     "lane_counts": latest_db_event.lane_counts or {},
                     "direction_counts": latest_db_event.direction_counts or {},
                     "events": latest_db_event.events or [],
+                    "freshness": freshness,
+                    "cache_age_seconds": age_seconds,
                     "message": "Telemetry snapshot retrieved from RouteX historical stream storage.",
+                    "provider_error": tomtom_provider_error,
                 }
         except Exception as exc:
             logger.warning(f"Database fallback query failed: {exc}")
@@ -160,6 +213,7 @@ class LiveTrafficService:
             "direction_counts": {},
             "events": [],
             "message": "No active live traffic stream in Redis buffer or database telemetry.",
+            "provider_error": tomtom_provider_error,
         }
 
     def ingest_traffic_snapshot(
@@ -183,6 +237,10 @@ class LiveTrafficService:
             event_time = ts
         else:
             event_time = now
+
+        if event_time.tzinfo is not None:
+            from datetime import timezone
+            event_time = event_time.astimezone(timezone.utc).replace(tzinfo=None)
 
         lat = snapshot.get("latitude", DEFAULT_CAMERA_LATITUDE)
         lng = snapshot.get("longitude", DEFAULT_CAMERA_LONGITUDE)
@@ -233,6 +291,32 @@ class LiveTrafficService:
             db.add(db_event)
             db.commit()
             db.refresh(db_event)
+
+            try:
+                from backend.app.services.alert_service import process_alert_event
+                process_alert_event(
+                    db,
+                    {
+                        "source": source_info,
+                        "source_event_id": snapshot.get("source_event_id") or f"traffic-stream:{db_event.id}",
+                        "timestamp": event_time,
+                        "intersection_id": intersection_id,
+                        "latitude": lat,
+                        "longitude": lng,
+                        "total_vehicles": db_event.total_vehicles,
+                        "average_speed": db_event.average_speed,
+                        "free_flow_speed": snapshot.get("free_flow_speed"),
+                        "density": db_event.density,
+                        "congestion_level": db_event.congestion_level,
+                        "delay_seconds": snapshot.get("delay_seconds"),
+                        "road_closure": snapshot.get("road_closure", False),
+                        "predicted_congestion": snapshot.get("predicted_congestion"),
+                        "anomaly_detected": snapshot.get("anomaly_detected", False),
+                        "events": events_data,
+                    },
+                )
+            except Exception as alert_error:
+                logger.warning("Traffic snapshot stored; alert generation skipped: %s", alert_error)
 
             # Publish to Redis buffer if enabled
             if publish_to_redis:

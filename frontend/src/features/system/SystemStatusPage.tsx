@@ -15,9 +15,9 @@ import {
 import { PageHeader } from "../../components/layout/PageHeader";
 import { useQuery } from "@tanstack/react-query";
 import { getBackendHealth } from "../../api/health";
-import { getLiveTraffic } from "../../api/liveTraffic";
 import { getRoads } from "../../api/roads";
 import { getModelRegistry } from "../../api/predictions";
+import { getIntegrationHealth } from "../../api/health";
 import { formatTimestamp } from "../../utils/formatters";
 
 interface ComponentProbe {
@@ -49,25 +49,20 @@ export const SystemStatusPage: React.FC = () => {
       const latency = Math.round(performance.now() - start);
       return { ...res, latency };
     },
-    refetchInterval: 10000,
+    refetchInterval: 30000,
   });
 
-  // Probe Redis via /live-traffic/
+  // Probe Redis, Kafka TCP reachability, provider last results, and alert storage without triggering provider calls.
   const {
-    data: redisData,
-    isLoading: isCheckingRedis,
-    error: redisError,
-    refetch: refetchRedis,
-    dataUpdatedAt: redisUpdatedAt,
+    data: integrationData,
+    isLoading: isCheckingIntegrations,
+    error: integrationError,
+    refetch: refetchIntegrations,
+    dataUpdatedAt: integrationsUpdatedAt,
   } = useQuery({
-    queryKey: ["probe-redis"],
-    queryFn: async () => {
-      const start = performance.now();
-      const data = await getLiveTraffic();
-      const latency = Math.round(performance.now() - start);
-      return { data, latency };
-    },
-    refetchInterval: 10000,
+    queryKey: ["probe-integrations"],
+    queryFn: ({ signal }) => getIntegrationHealth(signal),
+    refetchInterval: 30000,
     retry: false,
   });
 
@@ -86,7 +81,7 @@ export const SystemStatusPage: React.FC = () => {
       const latency = Math.round(performance.now() - start);
       return { count: data.length, latency };
     },
-    refetchInterval: 10000,
+    refetchInterval: 30000,
     retry: false,
   });
 
@@ -105,15 +100,24 @@ export const SystemStatusPage: React.FC = () => {
       const latency = Math.round(performance.now() - start);
       return { models: data.production_models.length, latency };
     },
-    refetchInterval: 10000,
+    refetchInterval: 30000,
     retry: false,
   });
 
   const handleRefreshAll = () => {
     refetchFastApi();
-    refetchRedis();
+    refetchIntegrations();
     refetchPostgres();
     refetchML();
+  };
+
+  const probeComponent = (key: string) => integrationData?.components[key];
+  const probeStatus = (key: string): ComponentProbe["status"] => {
+    if (isCheckingIntegrations) return "checking";
+    const status = probeComponent(key)?.status;
+    if (status === "healthy" || status === "reachable" || status === "available") return "healthy";
+    if (status === "unverified" || status === "unconfigured" || !status) return "unverified";
+    return "unhealthy";
   };
 
   const probes: ComponentProbe[] = [
@@ -152,14 +156,12 @@ export const SystemStatusPage: React.FC = () => {
       name: "Redis Live Traffic Cache",
       type: "In-Memory State Buffer",
       endpoint: "GET /live-traffic/ (redis get_latest)",
-      status: isCheckingRedis ? "checking" : !redisError && redisData ? "healthy" : "unhealthy",
-      latencyMs: redisData?.latency,
-      details: !redisError
-        ? "Live traffic buffer operational (telemetry key routex:traffic:latest active)"
-        : "Redis service unavailable or no active snapshot published",
+      status: integrationError ? "unhealthy" : probeStatus("redis"),
+      latencyMs: probeComponent("redis")?.latency_ms ?? undefined,
+      details: probeComponent("redis")?.error || probeComponent("redis")?.details || integrationError?.message || "Redis status is not available",
       verifiedDirectly: true,
-      lastSuccess: redisUpdatedAt ? new Date(redisUpdatedAt).toISOString() : null,
-      error: redisError ? (redisError as Error).message : null,
+      lastSuccess: integrationsUpdatedAt ? new Date(integrationsUpdatedAt).toISOString() : null,
+      error: probeComponent("redis")?.error || integrationError?.message || null,
     },
     {
       id: "ml",
@@ -179,12 +181,61 @@ export const SystemStatusPage: React.FC = () => {
       id: "kafka",
       name: "Apache Kafka Message Broker",
       type: "Event Streaming Cluster",
-      endpoint: "Topic routex:traffic",
-      status: "unverified",
-      details: "No direct HTTP health probe. Background streaming worker handles Kafka; cannot be marked healthy based on frontend connectivity alone.",
-      verifiedDirectly: false,
-      lastSuccess: null,
-      error: null,
+      endpoint: "TCP localhost:9092",
+      status: integrationError ? "unhealthy" : probeStatus("kafka"),
+      latencyMs: probeComponent("kafka")?.latency_ms ?? undefined,
+      details: probeComponent("kafka")?.error || probeComponent("kafka")?.details || "Kafka status is not available",
+      verifiedDirectly: true,
+      lastSuccess: probeComponent("kafka")?.checked_at || null,
+      error: probeComponent("kafka")?.error || integrationError?.message || null,
+    },
+    {
+      id: "tomtom-flow",
+      name: "TomTom Traffic Flow API",
+      type: "External Live Provider",
+      endpoint: "Traffic Services v4 Flow Segment",
+      status: integrationError ? "unhealthy" : probeStatus("tomtom_flow"),
+      latencyMs: probeComponent("tomtom_flow")?.latency_ms ?? undefined,
+      details: probeComponent("tomtom_flow")?.error || probeComponent("tomtom_flow")?.details || "Provider status is not available",
+      verifiedDirectly: probeComponent("tomtom_flow")?.status === "available",
+      lastSuccess: probeComponent("tomtom_flow")?.checked_at || null,
+      error: probeComponent("tomtom_flow")?.error || integrationError?.message || null,
+    },
+    {
+      id: "tomtom-incidents",
+      name: "TomTom Traffic Incidents API",
+      type: "External Live Provider",
+      endpoint: "Traffic Services v5 Incident Details",
+      status: integrationError ? "unhealthy" : probeStatus("tomtom_incidents"),
+      latencyMs: probeComponent("tomtom_incidents")?.latency_ms ?? undefined,
+      details: probeComponent("tomtom_incidents")?.error || probeComponent("tomtom_incidents")?.details || "Provider status is not available",
+      verifiedDirectly: probeComponent("tomtom_incidents")?.status === "available",
+      lastSuccess: probeComponent("tomtom_incidents")?.checked_at || null,
+      error: probeComponent("tomtom_incidents")?.error || integrationError?.message || null,
+    },
+    {
+      id: "osrm",
+      name: "OSRM Primary Routing",
+      type: "External Routing Provider",
+      endpoint: "router.project-osrm.org route service",
+      status: integrationError ? "unhealthy" : probeStatus("osrm"),
+      latencyMs: probeComponent("osrm")?.latency_ms ?? undefined,
+      details: probeComponent("osrm")?.error || probeComponent("osrm")?.details || "OSRM has not been probed yet",
+      verifiedDirectly: probeComponent("osrm")?.status === "available",
+      lastSuccess: probeComponent("osrm")?.checked_at || null,
+      error: probeComponent("osrm")?.error || integrationError?.message || null,
+    },
+    {
+      id: "alert-store",
+      name: "Alert Rules & Persistence",
+      type: "PostgreSQL Alert Engine",
+      endpoint: "GET /health/integrations (alert tables)",
+      status: integrationError ? "unhealthy" : probeStatus("alert_store"),
+      latencyMs: probeComponent("alert_store")?.latency_ms ?? undefined,
+      details: probeComponent("alert_store")?.error || probeComponent("alert_store")?.details || "Alert store status is not available",
+      verifiedDirectly: true,
+      lastSuccess: integrationsUpdatedAt ? new Date(integrationsUpdatedAt).toISOString() : null,
+      error: probeComponent("alert_store")?.error || integrationError?.message || null,
     },
     {
       id: "yolo",
@@ -225,8 +276,7 @@ export const SystemStatusPage: React.FC = () => {
           <p className="font-semibold text-blue-100">Verified Health Reporting Protocol</p>
           <p className="text-blue-300/90 leading-relaxed">
             RouteX strictly verifies components through authentic HTTP/PostGIS/Redis endpoint probes.
-            Components without direct HTTP probes (such as the Apache Kafka broker and background YOLO workers)
-            are strictly marked as <strong className="text-white">Unverified</strong> rather than falsely reported as healthy.
+            Kafka is checked for broker TCP reachability; provider connectivity reflects the last real traffic request, and health refresh does not spend TomTom quota. YOLO remains unverified because its worker is asynchronous and has no health endpoint.
           </p>
         </div>
       </div>
@@ -316,7 +366,7 @@ export const SystemStatusPage: React.FC = () => {
             <span className="font-mono font-medium text-white block">
               {fastApiUpdatedAt ? formatTimestamp(new Date(fastApiUpdatedAt).toISOString()) : "Connecting..."}
             </span>
-            <span className="text-[10px] text-emerald-400 mt-1 block">10s poll cadence</span>
+            <span className="text-[10px] text-emerald-400 mt-1 block">30s poll cadence</span>
           </div>
 
           <div className="p-3.5 rounded-lg bg-slate-800/40 border border-slate-800">
@@ -327,18 +377,18 @@ export const SystemStatusPage: React.FC = () => {
             <span className="font-mono font-medium text-white block">
               {postgresUpdatedAt ? formatTimestamp(new Date(postgresUpdatedAt).toISOString()) : "Connecting..."}
             </span>
-            <span className="text-[10px] text-emerald-400 mt-1 block">10s poll cadence</span>
+            <span className="text-[10px] text-emerald-400 mt-1 block">30s poll cadence</span>
           </div>
 
           <div className="p-3.5 rounded-lg bg-slate-800/40 border border-slate-800">
             <div className="flex items-center gap-1.5 text-slate-400 text-[11px] mb-1">
               <Layers className="w-3.5 h-3.5 text-amber-400" />
-              <span>Redis /live-traffic/</span>
+              <span>Redis PING /health/integrations</span>
             </div>
             <span className="font-mono font-medium text-white block">
-              {redisUpdatedAt ? formatTimestamp(new Date(redisUpdatedAt).toISOString()) : "Connecting..."}
+              {integrationsUpdatedAt ? formatTimestamp(new Date(integrationsUpdatedAt).toISOString()) : "Connecting..."}
             </span>
-            <span className="text-[10px] text-emerald-400 mt-1 block">10s poll cadence</span>
+            <span className="text-[10px] text-emerald-400 mt-1 block">30s poll cadence</span>
           </div>
 
           <div className="p-3.5 rounded-lg bg-slate-800/40 border border-slate-800">
@@ -349,7 +399,7 @@ export const SystemStatusPage: React.FC = () => {
             <span className="font-mono font-medium text-white block">
               {mlUpdatedAt ? formatTimestamp(new Date(mlUpdatedAt).toISOString()) : "Connecting..."}
             </span>
-            <span className="text-[10px] text-emerald-400 mt-1 block">10s poll cadence</span>
+            <span className="text-[10px] text-emerald-400 mt-1 block">30s poll cadence</span>
           </div>
         </div>
       </div>

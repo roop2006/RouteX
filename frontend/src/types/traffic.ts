@@ -2,6 +2,8 @@ export type CongestionLevel = "LOW" | "MEDIUM" | "HIGH";
 
 export interface LiveTrafficData {
   timestamp?: string;
+  freshness?: "FRESH" | "RECENT" | "CACHED" | "STALE" | "HISTORICAL" | "UNAVAILABLE" | string;
+  cache_age_seconds?: number | null;
   total_vehicles: number;
   average_speed?: number;
   density?: number;
@@ -23,6 +25,7 @@ export interface LiveTrafficData {
   provider?: string;
   frc?: string;
   road_closure?: boolean;
+  provider_error?: string | null;
 }
 
 export interface TrafficIncident {
@@ -66,6 +69,7 @@ export interface TomTomCitySnapshot {
   }>;
   incidents: TrafficIncident[];
   message: string;
+  provider_error?: string | null;
 }
 
 export interface TrafficEvent {
@@ -82,6 +86,11 @@ export interface TrafficEvent {
   intersection_id?: string | null;
   latitude?: number | null;
   longitude?: number | null;
+  source?: string;
+  event_type?: string | null;
+  severity?: number | null;
+  description?: string | null;
+  delay_seconds?: number | null;
 }
 
 export interface TrafficEventCreate {
@@ -97,4 +106,3 @@ export interface TrafficEventCreate {
   latitude?: number;
   longitude?: number;
 }
-

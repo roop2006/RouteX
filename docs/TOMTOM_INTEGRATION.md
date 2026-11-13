@@ -94,3 +94,23 @@ All 81 backend tests pass (100% pass rate):
 - Full regression suite across Phase 1–8: 81 passed in 107.66s
 - Frontend lint: 0 errors, 0 warnings
 - Frontend build: 2,695 client modules built cleanly in 1.44s
+
+## 8. Selected Route Dashboard Integration (Phase 8)
+
+`SelectedRouteProvider` shares the route analysis, selected alternative, origin and destination, stable route ID, geometry, distance, estimated duration, and calculation time across the dashboard. Editing either route endpoint clears the selected route and its derived route/video analysis results until a new route calculation succeeds. Selecting an alternative updates the shared route without recalculating it.
+
+`POST /analysis/route` evaluates each returned route geometry against the existing PostGIS tables. Roads use a 250 m corridor and are labeled `INTERSECTS` or `NEARBY`; intersections and stored traffic observations use a 350 m corridor. Road/intersection observation summaries associate events within 100 m of the asset. Traffic observations include their source and provider metadata, location, time, event details, and available vehicle/current-speed/free-flow-speed/density values. Freshness is reported as `FRESH` (up to 5 minutes), `RECENT` (up to 1 hour), `HISTORICAL`, or `UNAVAILABLE`. No route data is synthesized when the corridor has no observations.
+
+The route response retains the existing endpoint and adds per-alternative `route_id`, corridor details, and AI result. Traffic Analysis consumes the selected corridor observations; Roads and Intersections render only the selected alternative's matched assets. With no selected route, these pages retain their existing general database views. Route AI uses the existing production predictor only when corridor flow observations are available. Video-derived results remain separate unless the existing combined-analysis association check confirms a camera/intersection association.
+
+Route matching uses SRID 4326 geometries and geography distance predicates in metres. The envelope prefilter can use the existing geometry GiST index; exact membership uses `ST_DWithin`, and road intersection status uses `ST_Intersects`. The frontend does not poll duplicate route endpoints: route-specific records are part of the route-analysis response.
+
+Focused regression coverage now checks route identifiers, per-alternative corridor/AI payloads, road geometry and match relation, valid observation locations/source, and freshness fields. See `progress.md` for the current verification results and documentation files that are absent from this checkout.
+
+## 9. Phase 9 connectivity status and alert integration
+
+The TomTom service continues to use the existing Traffic Flow v4 and Incident Details v5 products. The service now uses a shared bounded `httpx.Client` (2-second connect and 4-second read timeouts), a single retry for transient network/gateway errors, and per-query singleflight so simultaneous requests for the same cache key share one provider request. Flow responses are marked cached or stale; stale flow is limited to one hour. Incidents are cached separately. Credentials remain server-side and are never included in client responses or logs.
+
+Direct Flow and Incident Details calls were checked independently in this environment. Both returned Windows `WinError 10061` (connection refused); OSRM did as well. The configured key loaded, but live data could not be verified because outbound connections from the host were refused. This is not evidence of a provider authentication failure. Health diagnostics report the last real provider observation without triggering a paid request. Mocked tests cover request construction, retries, caching, concurrency coalescing, incident parsing, and graceful errors, but do not claim external connectivity.
+
+Persisted flow/incident observations, Kafka traffic messages, verified video observations, and fresh existing AI predictions feed the shared configurable alert engine. Alert rules, lifecycle records, and in-app notifications are stored in PostgreSQL. Redis TTL keys accelerate deduplication and cooldown checks but are not required for persistence. Route-specific active alerts are matched against the selected route's GeoJSON LineString with PostGIS geography distance and include distance along the route where available. The alert API and dashboard expose active alerts, resolved history, notification read state, rule settings, route matching, acknowledge/resolve, and statistics. See `progress.md` for schema, test outcomes, and the full-suite limitation.

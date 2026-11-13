@@ -16,6 +16,8 @@ from .models.intersection import Intersection
 from .models.road_segment import RoadSegment
 from .models.traffic_zone import TrafficZone
 from .models.prediction_history import PredictionHistory
+from .models.alert_rule import AlertRule
+from .models.traffic_alert import TrafficAlert, AlertNotification
 
 from .api.traffic import router as traffic_router
 from .api.live_traffic import router as live_traffic_router
@@ -25,6 +27,8 @@ from .api.roads import router as roads_router
 from .api.prediction import router as prediction_router
 from .api.ai_live import router as ai_live_router
 from .api.user_analysis import router as user_analysis_router
+from .api.alerts import router as alerts_router
+from .api.health import router as integration_health_router
 
 from .services.road_network_service import ensure_arterial_network
 from .services.traffic_ingestion_service import seed_corridor_historical_observations
@@ -35,6 +39,8 @@ Base.metadata.create_all(bind=engine)
 try:
     _init_db = SessionLocal()
     try:
+        from .services.alert_service import initialize_alert_rules
+        initialize_alert_rules(_init_db)
         ensure_arterial_network(_init_db)
         seed_corridor_historical_observations(_init_db)
     finally:
@@ -67,6 +73,8 @@ app.include_router(roads_router)
 app.include_router(prediction_router)
 app.include_router(ai_live_router)
 app.include_router(user_analysis_router)
+app.include_router(alerts_router)
+app.include_router(integration_health_router)
 
 
 @app.get("/")

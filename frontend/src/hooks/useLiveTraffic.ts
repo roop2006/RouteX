@@ -12,7 +12,7 @@ export function useLiveTraffic(options?: { pollingEnabled?: boolean }) {
   const pollingEnabled = options?.pollingEnabled ?? true;
   return useQuery({
     queryKey: ["live-traffic"],
-    queryFn: getLiveTraffic,
+    queryFn: ({ signal }) => getLiveTraffic(signal),
     refetchInterval: pollingEnabled ? 5000 : false,
     refetchIntervalInBackground: false,
     retry: 1,
@@ -23,7 +23,7 @@ export function useLiveTraffic(options?: { pollingEnabled?: boolean }) {
 export function useLiveIncidents() {
   return useQuery({
     queryKey: ["live-incidents"],
-    queryFn: getLiveIncidents,
+    queryFn: ({ signal }) => getLiveIncidents(signal),
     refetchInterval: 30000,
     refetchIntervalInBackground: false,
     retry: 1,
@@ -34,7 +34,7 @@ export function useLiveIncidents() {
 export function useTomTomOverview() {
   return useQuery({
     queryKey: ["tomtom-overview"],
-    queryFn: getTomTomOverview,
+    queryFn: ({ signal }) => getTomTomOverview(signal),
     refetchInterval: 30000,
     refetchIntervalInBackground: false,
     retry: 1,
@@ -45,7 +45,7 @@ export function useTomTomOverview() {
 export function useLivePrediction() {
   return useQuery({
     queryKey: ["live-prediction"],
-    queryFn: getLivePrediction,
+    queryFn: ({ signal }) => getLivePrediction(signal),
     refetchInterval: 5000,
     refetchIntervalInBackground: false,
     retry: 1,
@@ -53,12 +53,13 @@ export function useLivePrediction() {
   });
 }
 
-export function useTrafficEvents(params?: TrafficEventsParams) {
+export function useTrafficEvents(params?: TrafficEventsParams, enabled = true) {
   return useQuery({
     queryKey: ["traffic-events", params],
-    queryFn: () => getTrafficEvents(params),
+    queryFn: ({ signal }) => getTrafficEvents(params, signal),
     refetchInterval: 10000,
     refetchIntervalInBackground: false,
+    enabled,
   });
 }
 

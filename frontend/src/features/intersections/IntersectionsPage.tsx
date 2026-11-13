@@ -6,11 +6,19 @@ import { LoadingState } from "../../components/common/LoadingState";
 import { ErrorState } from "../../components/common/ErrorState";
 import { EmptyState } from "../../components/common/EmptyState";
 import { useIntersections } from "../../hooks/useGeography";
+import { useSelectedRoute } from "../../contexts/selectedRouteContext";
+import type { CorridorIntersectionMatch } from "../../types/userAnalysis";
 
 export const IntersectionsPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
-  const { data: intersections = [], isLoading, error, refetch } = useIntersections();
+  const routeContext = useSelectedRoute();
+  const routeMode = Boolean(routeContext.analysis && routeContext.selectedRoute);
+  const routeIntersections = routeContext.selectedRoute?.corridor?.nearby_intersections || [];
+  const { data: registeredIntersections = [], isLoading: isLoadingRegistered, error: registeredError, refetch } = useIntersections(!routeMode);
+  const intersections = routeMode ? routeIntersections : registeredIntersections;
+  const isLoading = !routeMode && isLoadingRegistered;
+  const error = !routeMode ? registeredError : null;
 
   const filtered = intersections.filter(
     (int) =>
@@ -22,10 +30,10 @@ export const IntersectionsPage: React.FC = () => {
     <div className="space-y-6">
       <PageHeader
         title="Intersections & Sensor Nodes"
-        subtitle="Critical junction points, camera telemetry mounts, and PostGIS location fixtures"
+        subtitle={routeMode ? "Registered intersections associated with the selected route corridor" : "Critical junction points, camera telemetry mounts, and PostGIS location fixtures"}
         badge={
           <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-            {intersections.length} Active Junctions
+            {routeMode ? `${intersections.length} Route Matches` : `${intersections.length} Active Junctions`}
           </span>
         }
         actions={
@@ -67,6 +75,13 @@ export const IntersectionsPage: React.FC = () => {
         }
       />
 
+      {routeMode && routeContext.selectedRoute && (
+        <div className="rounded-lg border border-indigo-500/30 bg-indigo-950/20 p-3 text-xs text-slate-300">
+          Intersections within the configured route corridor for {routeContext.origin?.name || "origin"} â†’ {routeContext.destination?.name || "destination"}.
+          <span className="ml-2 text-slate-400">Only registered PostGIS nodes are shown.</span>
+        </div>
+      )}
+
       {isLoading ? (
         <LoadingState message="Loading intersection fixtures from database..." skeletonLines={3} />
       ) : error ? (
@@ -77,8 +92,12 @@ export const IntersectionsPage: React.FC = () => {
         />
       ) : filtered.length === 0 ? (
         <EmptyState
-          title="No Intersections Found"
-          description={searchTerm ? `No junction matches "${searchTerm}".` : "No intersections registered in database."}
+          title={routeMode ? "No Registered Intersections Along This Route" : "No Intersections Found"}
+          description={searchTerm
+            ? `No junction matches "${searchTerm}".`
+            : routeMode
+            ? "No registered intersection geometry falls within the configured route corridor."
+            : "No intersections registered in database."}
         />
       ) : viewMode === "table" ? (
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden backdrop-blur-sm shadow-xl">
@@ -94,6 +113,8 @@ export const IntersectionsPage: React.FC = () => {
                   <th className="py-3 px-4">Intersection Name</th>
                   <th className="py-3 px-4">Latitude</th>
                   <th className="py-3 px-4">Longitude</th>
+                  {routeMode && <th className="py-3 px-4">Route Offset / Roads</th>}
+                  {routeMode && <th className="py-3 px-4">Traffic Observation</th>}
                   <th className="py-3 px-4">Coordinate System</th>
                   <th className="py-3 px-4 text-right">Map Link</th>
                 </tr>
@@ -105,6 +126,8 @@ export const IntersectionsPage: React.FC = () => {
                     <td className="py-3 px-4 font-bold text-white">{item.name}</td>
                     <td className="py-3 px-4 font-mono text-slate-200">{item.latitude.toFixed(4)}</td>
                     <td className="py-3 px-4 font-mono text-slate-200">{item.longitude.toFixed(4)}</td>
+                    {routeMode && <td className="py-3 px-4 text-slate-300">{Math.round((item as CorridorIntersectionMatch).distance_to_route_meters || 0)} m / {((item as CorridorIntersectionMatch).associated_road_ids || []).join(", ") || "No associated road"}</td>}
+                    {routeMode && <td className="py-3 px-4 text-slate-300">{(item as CorridorIntersectionMatch).observed_average_speed == null ? "No observation" : `${(item as CorridorIntersectionMatch).observed_average_speed} km/h â€¢ ${(item as CorridorIntersectionMatch).observed_congestion || "Unknown"} â€¢ ${(item as CorridorIntersectionMatch).observation_count || 0} records`}</td>}
                     <td className="py-3 px-4">
                       <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-emerald-400 border border-slate-700">
                         SRID 4326 Point
@@ -169,6 +192,31 @@ export const IntersectionsPage: React.FC = () => {
                     <span className="text-slate-400">PostGIS Geometry</span>
                     <span className="font-mono text-emerald-400 text-[11px]">SRID 4326 Point</span>
                   </div>
+                  {routeMode && (
+                    <>
+                      <div className="flex justify-between items-center text-slate-300">
+                        <span className="text-slate-400">Distance from route</span>
+                        <span className="font-mono text-white">{Math.round((item as CorridorIntersectionMatch).distance_to_route_meters || 0)} m</span>
+                      </div>
+                      <div className="flex justify-between items-center text-slate-300">
+                        <span className="text-slate-400">Associated roads</span>
+                        <span className="font-mono text-white">{(item as CorridorIntersectionMatch).associated_road_ids?.join(", ") || "None registered nearby"}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-slate-300">
+                        <span className="text-slate-400">Traffic status</span>
+                        <span className="font-mono text-white">{(item as CorridorIntersectionMatch).observed_congestion || "No observation"}</span>
+                      </div>
+                      {(item as CorridorIntersectionMatch).observed_average_speed != null && (
+                        <div className="flex justify-between items-center text-slate-300">
+                          <span className="text-slate-400">Observed speed / records</span>
+                          <span className="font-mono text-white">{(item as CorridorIntersectionMatch).observed_average_speed} km/h / {(item as CorridorIntersectionMatch).observation_count || 0}</span>
+                        </div>
+                      )}
+                      {(item as CorridorIntersectionMatch).last_observation_at && (
+                        <div className="text-slate-400">Last observed: {(item as CorridorIntersectionMatch).last_observation_at}</div>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
 
