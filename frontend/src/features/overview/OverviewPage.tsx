@@ -1,4 +1,5 @@
 import React from "react";
+import { useSelectedRoute } from "../../contexts/selectedRouteContext";
 import { Link } from "react-router-dom";
 import {
   Car,
@@ -25,6 +26,8 @@ import { formatDensity, formatSpeed, formatTimeOnly } from "../../utils/formatte
 import { getCongestionBadgeClass } from "../../utils/congestion";
 
 export const OverviewPage: React.FC = () => {
+  const route = useSelectedRoute();
+  const corridor = route.selectedRoute?.corridor;
   const { data: isBackendHealthy } = useQuery({
     queryKey: ["backend-health-ping"],
     queryFn: checkBackendConnection,
@@ -40,21 +43,30 @@ export const OverviewPage: React.FC = () => {
   } = useLiveTraffic();
 
   const {
-    data: livePrediction,
+    data: generalPrediction,
     isLoading: isLoadingPred,
-  } = useLivePrediction();
+  } = useLivePrediction(!route.selectedRoute);
 
   const {
-    data: trafficEvents = [],
-  } = useTrafficEvents({ limit: 20 });
+    data: generalEvents = [],
+  } = useTrafficEvents({ limit: 20 }, !route.selectedRoute);
 
-  const { data: roads = [] } = useRoads();
-  const { data: intersections = [] } = useIntersections();
+  const { data: generalRoads = [] } = useRoads(!route.selectedRoute);
+  const roads = route.selectedRoute ? corridor?.matched_roads ?? [] : generalRoads;
+  const { data: generalIntersections = [] } = useIntersections(!route.selectedRoute);
+  const intersections = route.selectedRoute ? corridor?.nearby_intersections ?? [] : generalIntersections;
+  const trafficEvents = route.selectedRoute ? corridor?.traffic_observations ?? [] : generalEvents;
+  const forecast = route.selectedRoute?.ai_prediction;
+  const livePrediction = route.selectedRoute ? (forecast?.status === "AVAILABLE" ? { prediction: {
+    predicted_congestion: forecast.predicted_congestion ?? "UNKNOWN",
+    predicted_vehicle_count: forecast.predicted_vehicle_count ?? 0,
+    prediction_confidence: forecast.prediction_confidence ?? 0,
+  }} : null) : generalPrediction;
 
   const congestion = liveTraffic?.congestion_level || "UNKNOWN";
-  const vehicleCount = liveTraffic?.total_vehicles ?? 0;
-  const speed = liveTraffic?.average_speed ?? 0;
-  const density = liveTraffic?.density ?? 0;
+  const vehicleCount = liveTraffic?.total_vehicles ?? "Unavailable";
+  const speed = liveTraffic?.average_speed;
+  const density = liveTraffic?.density;
 
   return (
     <div className="space-y-6">
@@ -110,7 +122,7 @@ export const OverviewPage: React.FC = () => {
         <MetricCard
           title="Current Vehicle Flow"
           value={isLoadingTraffic ? "..." : vehicleCount}
-          subtitle={`Across active monitored corridors`}
+          subtitle={route.selectedRoute ? "Selected route observations" : "Latest monitored location"}
           icon={<Car className="w-5 h-5 text-blue-400" />}
           accentColor="blue"
           badge={

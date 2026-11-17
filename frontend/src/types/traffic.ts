@@ -4,9 +4,9 @@ export interface LiveTrafficData {
   timestamp?: string;
   freshness?: "FRESH" | "RECENT" | "CACHED" | "STALE" | "HISTORICAL" | "UNAVAILABLE" | string;
   cache_age_seconds?: number | null;
-  total_vehicles: number;
-  average_speed?: number;
-  density?: number;
+  total_vehicles: number | null;
+  average_speed?: number | null;
+  density?: number | null;
   congestion_level?: CongestionLevel | string;
   vehicle_types?: Record<string, number>;
   lane_counts?: Record<string, number>;
@@ -51,8 +51,8 @@ export interface TomTomCitySnapshot {
   provider: string;
   timestamp: string;
   intersections_monitored: number;
-  average_speed: number;
-  average_density: number;
+  average_speed: number | null;
+  average_density: number | null;
   total_delay_seconds: number;
   active_incidents_count: number;
   junctions: Array<{
@@ -74,12 +74,12 @@ export interface TomTomCitySnapshot {
 
 export interface TrafficEvent {
   id: number;
-  total_vehicles: number;
+  total_vehicles: number | null;
   vehicle_types: Record<string, number>;
   lane_counts: Record<string, number>;
   direction_counts: Record<string, number>;
-  average_speed: number;
-  density: number;
+  average_speed: number | null;
+  density: number | null;
   congestion_level: CongestionLevel | string;
   events: Array<Record<string, unknown>>;
   timestamp: string;
@@ -94,12 +94,12 @@ export interface TrafficEvent {
 }
 
 export interface TrafficEventCreate {
-  total_vehicles: number;
+  total_vehicles: number | null;
   vehicle_types: Record<string, number>;
   lane_counts: Record<string, number>;
   direction_counts: Record<string, number>;
-  average_speed: number;
-  density: number;
+  average_speed: number | null;
+  density: number | null;
   congestion_level: CongestionLevel | string;
   events?: Array<Record<string, unknown>>;
   intersection_id?: string;

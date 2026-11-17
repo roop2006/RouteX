@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 from kafka import KafkaProducer
 
@@ -12,8 +13,15 @@ class TrafficKafkaProducer:
 
     def __init__(self):
 
+        bootstrap_option = (
+            "bootstrap_timeout_ms" if "bootstrap_timeout_ms" in KafkaProducer.DEFAULT_CONFIG
+            else "api_version_auto_timeout_ms"
+        )
         self.producer = KafkaProducer(
             bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+            max_block_ms=5000,
+            request_timeout_ms=5000,
+            **{bootstrap_option: 3000},
 
             value_serializer=lambda value:
                 json.dumps(value).encode("utf-8")
@@ -23,7 +31,7 @@ class TrafficKafkaProducer:
 
         future = self.producer.send(
             TRAFFIC_TOPIC,
-            value=traffic_data
+            value={"timestamp": datetime.now(timezone.utc).isoformat(), **traffic_data}
         )
 
         future.get(timeout=10)

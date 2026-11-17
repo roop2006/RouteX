@@ -128,7 +128,7 @@ export const LiveTrafficPage: React.FC = () => {
           <span>
             <strong className="text-slate-200">Data Source:</strong> {sourceLabel}{" "}
             {liveTraffic?.intersection_id ? `(Sensor ${liveTraffic.intersection_id})` : ""}{" "}
-            • Polled on a 5-second cadence.
+            • Polled on a bounded cadence.
           </span>
         </div>
         <div className="flex items-center gap-3 font-mono text-[11px] text-slate-400">
@@ -181,7 +181,7 @@ export const LiveTrafficPage: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <MetricCard
               title="Vehicles in Field"
-              value={liveTraffic.total_vehicles}
+              value={liveTraffic.total_vehicles ?? "Unavailable"}
               subtitle="Current camera frame count"
               icon={<Car className="w-5 h-5 text-blue-400" />}
               accentColor="blue"
@@ -190,7 +190,7 @@ export const LiveTrafficPage: React.FC = () => {
             <MetricCard
               title="Congestion Level"
               value={congestion}
-              subtitle={`Density: ${formatDensity(liveTraffic.density ?? 0)}`}
+              subtitle={`Density: ${formatDensity(liveTraffic.density)}`}
               icon={<Activity className="w-5 h-5 text-amber-400" />}
               accentColor={congestion === "HIGH" ? "rose" : congestion === "MEDIUM" ? "amber" : "emerald"}
               badge={
@@ -202,7 +202,7 @@ export const LiveTrafficPage: React.FC = () => {
 
             <MetricCard
               title="Mean Velocity"
-              value={formatSpeed(liveTraffic.average_speed ?? 0)}
+              value={formatSpeed(liveTraffic.average_speed)}
               subtitle={
                 liveTraffic.free_flow_speed
                   ? `Free-flow: ${formatSpeed(liveTraffic.free_flow_speed)}`
@@ -308,7 +308,7 @@ export const LiveTrafficPage: React.FC = () => {
                       <div className="flex items-center justify-between py-1 border-b border-slate-800/60">
                         <span className="text-slate-400">Free-Flow Speed</span>
                         <span className="font-mono text-slate-200">
-                          {formatSpeed(liveTraffic.free_flow_speed ?? liveTraffic.average_speed ?? 0)}
+                          {formatSpeed(liveTraffic.free_flow_speed ?? liveTraffic.average_speed)}
                         </span>
                       </div>
 

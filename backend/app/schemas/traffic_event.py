@@ -28,7 +28,7 @@ class TrafficEventCreate(BaseModel):
 class TrafficEventResponse(BaseModel):
     id: int
 
-    total_vehicles: int
+    total_vehicles: int | None
 
     vehicle_types: dict[str, float]
 
@@ -36,9 +36,9 @@ class TrafficEventResponse(BaseModel):
 
     direction_counts: dict[str, float]
 
-    average_speed: float
+    average_speed: float | None
 
-    density: float
+    density: float | None
 
     congestion_level: str
 

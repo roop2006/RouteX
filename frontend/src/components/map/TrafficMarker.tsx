@@ -5,7 +5,7 @@ import { formatTimeOnly, formatSpeed, formatDensity } from "../../utils/formatte
 import { getCongestionBadgeClass } from "../../utils/congestion";
 import type { NearbyTrafficEvent, Intersection } from "../../types/geography";
 
-function createCongestionMarkerIcon(level: string, vehicleCount?: number): L.DivIcon {
+function createCongestionMarkerIcon(level: string, vehicleCount?: number | null): L.DivIcon {
   const upper = (level || "UNKNOWN").toUpperCase();
   const color =
     upper === "HIGH" ? "#ef4444" : upper === "MEDIUM" ? "#f59e0b" : upper === "LOW" ? "#10b981" : "#64748b";
@@ -22,7 +22,7 @@ function createCongestionMarkerIcon(level: string, vehicleCount?: number): L.Div
       <div style="position: relative; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;">
         <span style="position: absolute; width: 100%; height: 100%; border-radius: 50%; background: ${glow}; opacity: 0.75;"></span>
         <div style="position: relative; width: 22px; height: 22px; border-radius: 50%; background: ${color}; border: 2px solid #0f172a; display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: 700; box-shadow: 0 4px 8px rgba(0,0,0,0.5);">
-          ${vehicleCount !== undefined ? vehicleCount : "•"}
+          ${vehicleCount != null ? vehicleCount : "•"}
         </div>
       </div>
     `,
@@ -74,7 +74,7 @@ export const TrafficEventMarker: React.FC<EventMarkerProps> = ({ event, onSelect
           <div className="grid grid-cols-2 gap-2 text-slate-300">
             <div>
               <span className="text-slate-400 block text-[10px]">Vehicles</span>
-              <span className="font-mono font-bold text-white text-sm">{event.total_vehicles}</span>
+              <span className="font-mono font-bold text-white text-sm">{event.total_vehicles ?? "Unavailable"}</span>
             </div>
             <div>
               <span className="text-slate-400 block text-[10px]">Speed</span>

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from backend.app.core.database import get_db
 from backend.app.services.live_traffic_service import live_traffic_service
 from backend.app.services.tomtom_traffic_service import tomtom_traffic_service
+from backend.app.schemas.alerts import RouteAlertSearch
 
 router = APIRouter(
     prefix="/live-traffic",
@@ -22,6 +23,16 @@ def get_live_traffic(db: Session = Depends(get_db)):
     """
     data = live_traffic_service.get_latest_live_traffic(db=db)
     return data
+
+
+@router.post("/route")
+def route_live_traffic(request: RouteAlertSearch, db: Session = Depends(get_db)):
+    import json
+    from backend.app.services.route_analysis_service import evaluate_corridor_telemetry, predict_route_corridor, apply_provider_summary
+    ingestion = tomtom_traffic_service.ingest_route_observations(request.geometry["coordinates"], db)
+    corridor, events, *_ = evaluate_corridor_telemetry(db, json.dumps(request.geometry))
+    apply_provider_summary(corridor, ingestion)
+    return {"route_id": request.route_id, "corridor": corridor, "ai_prediction": predict_route_corridor(events, corridor)}
 
 
 @router.get("/tomtom")
@@ -61,6 +72,8 @@ def get_live_incidents(
     Retrieves active live traffic incidents within a bounding box from TomTom.
     Defaults to Chennai Greater Metro.
     """
+    if min_lng >= max_lng or min_lat >= max_lat:
+        raise HTTPException(status_code=422, detail="Bounding box minimums must be below maximums")
     if not tomtom_traffic_service.is_configured:
         return {
             "status": "UNCONFIGURED",
@@ -80,26 +93,12 @@ def get_live_incidents(
             status_code=502,
             detail=tomtom_traffic_service.last_incident_error,
         )
-    for incident in incidents:
-        try:
-            from backend.app.services.alert_service import process_alert_event
-            process_alert_event(db, {
-                "source": "tomtom_traffic_incidents",
-                "source_event_id": incident.get("id"),
-                "timestamp": incident.get("start_time"),
-                "latitude": incident.get("centroid_lat"),
-                "longitude": incident.get("centroid_lng"),
-                "delay_seconds": incident.get("delay_seconds"),
-                "road_name": incident.get("from_road") or incident.get("to_road"),
-                "events": [incident],
-                "details": {"provider": "TomTom Traffic Incidents API"},
-            })
-        except Exception:
-            import logging
-            logging.getLogger("routex.live_traffic").exception(
-                "TomTom incident returned; alert creation failed for provider event %s",
-                incident.get("id"),
-            )
+    from backend.app.services.alert_service import sync_incident_alerts
+    try:
+        sync_incident_alerts(db, incidents, (min_lng, min_lat, max_lng, max_lat))
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Provider incidents retrieved, but alert persistence is unavailable")
     return {
         "status": "ACTIVE",
         "provider": "TomTom Traffic Incidents API",

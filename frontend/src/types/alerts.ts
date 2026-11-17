@@ -29,9 +29,23 @@ export interface TrafficAlert {
 }
 
 export interface RouteTrafficAlert {
+  route_id?: string;
+  marker_latitude?: number | null;
+  marker_longitude?: number | null;
   alert: TrafficAlert;
   distance_along_route_meters: number | null;
   distance_to_route_meters: number | null;
+}
+
+export interface RouteAlertSnapshot {
+  route_id: string;
+  status: "AVAILABLE" | "STALE" | "UNAVAILABLE" | "NOT_CONFIGURED";
+  checked_at: string | null;
+  freshness?: string;
+  error: string | null;
+  incident_count: number;
+  incidents: import("./traffic").TrafficIncident[];
+  alerts: RouteTrafficAlert[];
 }
 
 export interface AlertRule {

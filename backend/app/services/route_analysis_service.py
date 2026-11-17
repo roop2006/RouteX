@@ -3,7 +3,7 @@ import hashlib
 import logging
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import httpx
@@ -131,7 +131,7 @@ def fetch_osrm_route(
     Queries real road route geometry and driving directions via public OSRM engine.
     """
     alt_param = "true" if include_alternatives else "false"
-    OSRM_CONNECTIVITY["checked_at"] = datetime.now()
+    OSRM_CONNECTIVITY["checked_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
     url = (
         f"https://router.project-osrm.org/route/v1/driving/"
         f"{origin_lng},{origin_lat};{dest_lng},{dest_lat}"
@@ -369,6 +369,8 @@ def evaluate_corridor_telemetry(
                     END AS source
                 FROM traffic_stream_events e
                 WHERE e.location IS NOT NULL
+                  AND e.timestamp >= timezone('utc', now()) - interval '1 hour'
+                  AND COALESCE(e.events::jsonb->0->>'source','') <> 'historical_chennai_arterial_benchmark'
                   AND ST_DWithin(e.location::geography, r.geometry::geography, :asset_observation_radius_m)
                   AND ST_DWithin(e.location::geography, route.geometry::geography, :intersection_corridor_m)
                 ORDER BY e.timestamp DESC
@@ -444,6 +446,8 @@ def evaluate_corridor_telemetry(
                     END AS source
                 FROM traffic_stream_events e
                 WHERE e.location IS NOT NULL
+                  AND e.timestamp >= timezone('utc', now()) - interval '1 hour'
+                  AND COALESCE(e.events::jsonb->0->>'source','') <> 'historical_chennai_arterial_benchmark'
                   AND (e.intersection_id = i.intersection_id OR
                        ST_DWithin(e.location::geography, i.location::geography, :asset_observation_radius_m))
                   AND ST_DWithin(e.location::geography, route.geometry::geography, :intersection_corridor_m)
@@ -510,6 +514,8 @@ def evaluate_corridor_telemetry(
             events
         FROM traffic_stream_events
         WHERE location IS NOT NULL
+        AND timestamp >= timezone('utc', now()) - interval '1 hour'
+        AND COALESCE(events::jsonb->0->>'source','') NOT IN ('historical_chennai_arterial_benchmark','tomtom_traffic_incidents')
         AND ST_DWithin(
             location::geography,
             ST_SetSRID(ST_GeomFromGeoJSON(:geom), 4326)::geography,
@@ -535,17 +541,17 @@ def evaluate_corridor_telemetry(
             intersection_id=event.intersection_id,
             latitude=float(event.latitude),
             longitude=float(event.longitude),
-            total_vehicles=int(event.total_vehicles or 0),
-            vehicle_types=event.vehicle_types or {},
+            total_vehicles=None if source.startswith("tomtom_") else event.total_vehicles,
+            vehicle_types={} if source.startswith("tomtom_") else event.vehicle_types or {},
             lane_counts=event.lane_counts or {},
             direction_counts=event.direction_counts or {},
-            average_speed=float(event.average_speed or 0.0),
+            average_speed=event.average_speed,
             free_flow_speed=(
                 float(metadata["free_flow_speed"])
                 if metadata.get("free_flow_speed") is not None
                 else None
             ),
-            density=float(event.density or 0.0),
+            density=event.density,
             congestion_level=str(event.congestion_level or "UNKNOWN"),
             timestamp=event.timestamp,
             source=source,
@@ -581,9 +587,12 @@ def evaluate_corridor_telemetry(
 
         effective_flow = flow_events if flow_events else [e for e in stream_events if e not in incident_events]
         if effective_flow:
-            observed_avg_speed = round(sum(e.average_speed for e in effective_flow) / len(effective_flow), 1)
-            observed_vehicles = round(sum(e.total_vehicles for e in effective_flow) / len(effective_flow), 1)
-            observed_density = round(sum(e.density for e in effective_flow) / len(effective_flow), 3)
+            speeds = [e.average_speed for e in effective_flow if e.average_speed is not None]
+            observed_avg_speed = round(sum(speeds) / len(speeds), 1) if speeds else None
+            counts = [o.total_vehicles for o in traffic_observations if o.total_vehicles is not None]
+            observed_vehicles = round(sum(counts) / len(counts), 1) if counts else None
+            densities = [e.density for e in effective_flow if e.density is not None]
+            observed_density = round(sum(densities) / len(densities), 3) if densities else None
 
         for inc in incident_events:
             raw_evts = inc.events if isinstance(inc.events, list) else []
@@ -616,7 +625,7 @@ def evaluate_corridor_telemetry(
 
     latest_observation_at = max((o.timestamp for o in traffic_observations), default=None)
     observation_age_seconds = (
-        max(0.0, (datetime.now() - latest_observation_at).total_seconds())
+        max(0.0, (datetime.now(timezone.utc).replace(tzinfo=None) - latest_observation_at).total_seconds())
         if latest_observation_at is not None
         else None
     )
@@ -680,6 +689,65 @@ def evaluate_corridor_telemetry(
     )
 
 
+def apply_provider_summary(corridor, ingestion):
+    incidents = ingestion.get("incidents", [])
+    corridor.active_incidents_count = len(incidents)
+    corridor.incident_delay_seconds = sum(inc.get("delay_seconds") or 0 for inc in incidents)
+    corridor.incidents_summary = [inc["description"] for inc in incidents if inc.get("description")][:5]
+    corridor.incident_status = ingestion.get("incident_status", "UNAVAILABLE")
+    corridor.provider_error = ingestion.get("provider_error")
+
+
+def predict_route_corridor(events, corridor):
+    has_telem = corridor.telemetry_status == "AVAILABLE"
+    avg_speed, density = corridor.observed_average_speed, corridor.observed_density
+    events = [e for e in events if e.total_vehicles is not None and e.average_speed is not None and e.density is not None
+              and not any(str(m.get("source", "")).startswith("tomtom_") for m in (e.events or []) if isinstance(m, dict))]
+    if not has_telem or avg_speed is None or density is None or not events:
+        return RouteAIExplanation(
+            status="INSUFFICIENT_DATA",
+            explanation=(
+                "No valid traffic flow observations were found along this route corridor. "
+                "RouteX AI requires measured vehicle counts, speed, and density; TomTom does not provide vehicle counts."
+            ),
+        )
+
+    try:
+        predictor = TrafficPredictor()
+        mean_vehicles = int(sum(e.total_vehicles for e in events) / len(events))
+        avg_speed = round(sum(e.average_speed for e in events) / len(events), 1)
+        density = round(sum(e.density for e in events) / len(events), 3)
+        observation_time = max(e.timestamp for e in events)
+        ai_input = {
+            "total_vehicles": mean_vehicles,
+            "average_speed": avg_speed,
+            "density": density,
+            "hour": observation_time.hour,
+            "day_of_week": observation_time.weekday(),
+            "minute": observation_time.minute,
+        }
+        prediction = predictor.predict(ai_input)
+        provider_name = corridor.telemetry_source or "RouteX sensor telemetry"
+        return RouteAIExplanation(
+            status="AVAILABLE",
+            model_name="routex_production_predictor",
+            predicted_congestion=prediction.get("predicted_congestion"),
+            prediction_confidence=prediction.get("prediction_confidence"),
+            predicted_vehicle_count=prediction.get("predicted_vehicle_count"),
+            features_used=ai_input,
+            explanation=(
+                f"Forecast derived from {len(events)} {provider_name} observations along this route. "
+                f"Features: avg speed {avg_speed} km/h, density {density:.2f}, volume {mean_vehicles} veh."
+            ),
+        )
+    except Exception as pred_err:
+        return RouteAIExplanation(
+            status="INSUFFICIENT_DATA",
+            explanation=f"AI model inference encountered an error: {str(pred_err)}",
+        )
+
+
+
 def calculate_user_route(
     request: RouteAnalysisRequest,
     db: Session,
@@ -731,26 +799,33 @@ def calculate_user_route(
         # Only probe a bounded number of via candidates when OSRM successfully
         # returned the primary route. PostGIS/TomTom fallback routes must not
         # trigger a cascade of external OSRM requests during an outage.
+        from concurrent.futures import ThreadPoolExecutor
+        candidates = []
         for preset in PRESET_LOCATIONS[:4]:
             dist_to_o = (((preset.lat - o_lat) ** 2 + (preset.lng - o_lng) ** 2) ** 0.5) * 111.0
             dist_to_d = (((preset.lat - d_lat) ** 2 + (preset.lng - d_lng) ** 2) ** 0.5) * 111.0
-            if dist_to_o > 0.4 and dist_to_d > 0.4 and (dist_to_o + dist_to_d) < (approx_straight_km * 1.6):
-                via_data = fetch_osrm_via_route(o_lng, o_lat, preset.lng, preset.lat, d_lng, d_lat)
-                if via_data and via_data.get("routes"):
-                    candidate_route = via_data["routes"][0]
-                    cand_dist = float(candidate_route.get("distance", 0.0))
-                    # Only accept if detour is meaningful (>100m) and not excessively convoluted (< 1.6x)
-                    if cand_dist > (primary_dist + 100.0) and cand_dist < (primary_dist * 1.6):
-                        candidate_route["legs"] = [{"summary": f"Via {preset.name}"}]
-                        raw_routes.append(candidate_route)
-                        break
+            if dist_to_o > 0.4 and dist_to_d > 0.4 and dist_to_o + dist_to_d < approx_straight_km * 1.6:
+                candidates.append(preset)
+        if candidates:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                responses = pool.map(lambda p: fetch_osrm_via_route(o_lng,o_lat,p.lng,p.lat,d_lng,d_lat), candidates)
+                for preset, via_data in zip(candidates, responses):
+                    if via_data and via_data.get("routes"):
+                        candidate = via_data["routes"][0]
+                        distance = float(candidate.get("distance",0))
+                        if primary_dist + 100 < distance < primary_dist * 1.6:
+                            candidate["legs"] = [{"summary": f"Via {preset.name}"}]
+                            raw_routes.append(candidate)
+                            break
+    raw_routes = raw_routes[:3]
 
+    route_ingestion = {}
     # 1.2 Ingest genuine live TomTom traffic flow and incidents along route geometry
     try:
         for raw in raw_routes:
             coords = raw.get("geometry", {}).get("coordinates", [])
             if coords:
-                tomtom_traffic_service.ingest_route_observations(coords, db)
+                route_ingestion[json.dumps(raw["geometry"])] = tomtom_traffic_service.ingest_route_observations(coords, db)
     except Exception as tt_err:
         logger.warning(f"TomTom route corridor ingestion error: {tt_err}")
 
@@ -769,6 +844,8 @@ def calculate_user_route(
             obs_cong,
             speed_ref,
         ) = evaluate_corridor_telemetry(db, geom_json)
+
+        apply_provider_summary(c_detail, route_ingestion.get(geom_json, {}))
 
         dist_m = float(raw.get("distance", 0.0))
         dist_km = round(dist_m / 1000.0, 2)
@@ -799,7 +876,7 @@ def calculate_user_route(
                 corridor=c_detail,
                 rank=idx + 1,
                 is_recommended=False,
-                incidents_count=0,
+                incidents_count=c_detail.active_incidents_count,
             )
         else:
             traffic_speed = max(10.0, obs_speed or speed_ref)
@@ -821,7 +898,7 @@ def calculate_user_route(
                 delay_minutes=delay_min,
                 congestion_level=obs_cong or "LOW",
                 geometry=raw["geometry"],
-                corridor_data_status="LIVE_TELEMETRY",
+                corridor_data_status="LIVE_TELEMETRY" if c_detail.observation_freshness == "FRESH" else "HISTORICAL_TELEMETRY",
                 corridor=c_detail,
                 rank=idx + 1,
                 is_recommended=False,
@@ -891,52 +968,10 @@ def calculate_user_route(
                 f"and {best_route.free_flow_duration_minutes} min base driving time. Live telemetry is unavailable for dynamic traffic adjustment."
             )
 
-    # 4. Preserve route-specific corridor data and AI analysis for every option.
-    now = datetime.now()
-    predictor: Optional[TrafficPredictor] = None
+    # Preserve one corridor and valid-input forecast per alternative.
     for alternative in built_alternatives:
-        events, has_telem, avg_speed, density, corridor = route_measurements[alternative.route_id]
-        if not has_telem or avg_speed is None or density is None or not events:
-            alternative.ai_prediction = RouteAIExplanation(
-                status="INSUFFICIENT_DATA",
-                explanation=(
-                    "No valid traffic flow observations were found along this route corridor. "
-                    "RouteX AI predictions require valid corridor observations."
-                ),
-            )
-            continue
-
-        try:
-            if predictor is None:
-                predictor = TrafficPredictor()
-            mean_vehicles = int(sum(e.total_vehicles for e in events) / len(events))
-            ai_input = {
-                "total_vehicles": mean_vehicles,
-                "average_speed": avg_speed,
-                "density": density,
-                "hour": now.hour,
-                "day_of_week": now.weekday(),
-                "minute": now.minute,
-            }
-            prediction = predictor.predict(ai_input)
-            provider_name = corridor.telemetry_source or "RouteX sensor telemetry"
-            alternative.ai_prediction = RouteAIExplanation(
-                status="AVAILABLE",
-                model_name="routex_production_predictor",
-                predicted_congestion=prediction.get("predicted_congestion"),
-                prediction_confidence=prediction.get("prediction_confidence"),
-                predicted_vehicle_count=prediction.get("predicted_vehicle_count"),
-                features_used=ai_input,
-                explanation=(
-                    f"Forecast derived from {len(events)} {provider_name} observations along this route. "
-                    f"Features: avg speed {avg_speed} km/h, density {density:.2f}, volume {mean_vehicles} veh."
-                ),
-            )
-        except Exception as pred_err:
-            alternative.ai_prediction = RouteAIExplanation(
-                status="INSUFFICIENT_DATA",
-                explanation=f"AI model inference encountered an error: {str(pred_err)}",
-            )
+        events, _, _, _, corridor = route_measurements[alternative.route_id]
+        alternative.ai_prediction = predict_route_corridor(events, corridor)
 
     primary_stream_events, primary_has_telemetry, primary_avg_speed, primary_density, primary_corridor = route_measurements[best_route.route_id]
     ai_explanation = best_route.ai_prediction or RouteAIExplanation(
@@ -968,7 +1003,7 @@ def calculate_user_route(
             speed_limit_reference=50.0,
         ),
         ai_prediction=ai_explanation,
-        analyzed_at=datetime.now(),
+        analyzed_at=datetime.now(timezone.utc).replace(tzinfo=None),
         data_freshness_note=freshness_note,
         recommended_route_summary=best_route.summary,
         recommendation_explanation=rec_explanation,

@@ -27,8 +27,10 @@ class TrafficStreamEvent(Base):
         primary_key=True
     )
 
-    total_vehicles: Mapped[int] = mapped_column(
-        Integer
+    source_event_id: Mapped[str | None] = mapped_column(String(220), nullable=True, unique=True)
+
+    total_vehicles: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
     )
 
     vehicle_types: Mapped[dict] = mapped_column(
@@ -43,12 +45,12 @@ class TrafficStreamEvent(Base):
         JSON
     )
 
-    average_speed: Mapped[float] = mapped_column(
-        Float
+    average_speed: Mapped[float | None] = mapped_column(
+        Float, nullable=True
     )
 
-    density: Mapped[float] = mapped_column(
-        Float
+    density: Mapped[float | None] = mapped_column(
+        Float, nullable=True
     )
 
     congestion_level: Mapped[str] = mapped_column(

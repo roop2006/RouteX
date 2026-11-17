@@ -25,7 +25,7 @@ interface ComponentProbe {
   name: string;
   type: string;
   endpoint: string;
-  status: "healthy" | "unhealthy" | "unverified" | "checking";
+  status: "healthy" | "unavailable" | "unverified" | "checking" | "degraded" | "not_configured" | "idle";
   latencyMs?: number;
   details: string;
   verifiedDirectly: boolean;
@@ -115,9 +115,12 @@ export const SystemStatusPage: React.FC = () => {
   const probeStatus = (key: string): ComponentProbe["status"] => {
     if (isCheckingIntegrations) return "checking";
     const status = probeComponent(key)?.status;
-    if (status === "healthy" || status === "reachable" || status === "available") return "healthy";
-    if (status === "unverified" || status === "unconfigured" || !status) return "unverified";
-    return "unhealthy";
+    if (status === "healthy" || status === "available") return "healthy";
+    if (status === "not_configured" || status === "unconfigured") return "not_configured";
+    if (status === "idle" || status === "degraded") return status;
+    if (status === "reachable") return "degraded";
+    if (status === "unverified" || !status) return "unverified";
+    return "unavailable";
   };
 
   const probes: ComponentProbe[] = [
@@ -126,7 +129,7 @@ export const SystemStatusPage: React.FC = () => {
       name: "FastAPI Application Server",
       type: "Core REST Gateway",
       endpoint: "GET /health",
-      status: isCheckingFastApi ? "checking" : fastApiHealth?.healthy ? "healthy" : "unhealthy",
+      status: isCheckingFastApi ? "checking" : fastApiHealth?.healthy ? "healthy" : "unavailable",
       latencyMs: fastApiHealth?.latency,
       details: fastApiHealth?.healthy
         ? "FastAPI responding on localhost:8001"
@@ -142,7 +145,7 @@ export const SystemStatusPage: React.FC = () => {
       name: "PostgreSQL & PostGIS Database",
       type: "Relational Geospatial Store",
       endpoint: "GET /roads/ (SQL/PostGIS query)",
-      status: isCheckingPostgres ? "checking" : !postgresError && postgresData ? "healthy" : "unhealthy",
+      status: isCheckingPostgres ? "checking" : !postgresError && postgresData ? "healthy" : "unavailable",
       latencyMs: postgresData?.latency,
       details: !postgresError
         ? `Spatial query verified (${postgresData?.count ?? 0} road segments verified from database)`
@@ -155,8 +158,8 @@ export const SystemStatusPage: React.FC = () => {
       id: "redis",
       name: "Redis Live Traffic Cache",
       type: "In-Memory State Buffer",
-      endpoint: "GET /live-traffic/ (redis get_latest)",
-      status: integrationError ? "unhealthy" : probeStatus("redis"),
+      endpoint: "GET /health/integrations (PING)",
+      status: integrationError ? "unavailable" : probeStatus("redis"),
       latencyMs: probeComponent("redis")?.latency_ms ?? undefined,
       details: probeComponent("redis")?.error || probeComponent("redis")?.details || integrationError?.message || "Redis status is not available",
       verifiedDirectly: true,
@@ -168,7 +171,7 @@ export const SystemStatusPage: React.FC = () => {
       name: "AI Prediction Service",
       type: "RandomForest ML Pipeline",
       endpoint: "GET /prediction/models",
-      status: isCheckingML ? "checking" : !mlError && mlData ? "healthy" : "unhealthy",
+      status: isCheckingML ? "checking" : !mlError && mlData ? "healthy" : "unavailable",
       latencyMs: mlData?.latency,
       details: !mlError
         ? `Model registry verified (${mlData?.models ?? 0} production artifacts loaded)`
@@ -182,7 +185,7 @@ export const SystemStatusPage: React.FC = () => {
       name: "Apache Kafka Message Broker",
       type: "Event Streaming Cluster",
       endpoint: "TCP localhost:9092",
-      status: integrationError ? "unhealthy" : probeStatus("kafka"),
+      status: integrationError ? "unavailable" : probeStatus("kafka"),
       latencyMs: probeComponent("kafka")?.latency_ms ?? undefined,
       details: probeComponent("kafka")?.error || probeComponent("kafka")?.details || "Kafka status is not available",
       verifiedDirectly: true,
@@ -194,7 +197,7 @@ export const SystemStatusPage: React.FC = () => {
       name: "TomTom Traffic Flow API",
       type: "External Live Provider",
       endpoint: "Traffic Services v4 Flow Segment",
-      status: integrationError ? "unhealthy" : probeStatus("tomtom_flow"),
+      status: integrationError ? "unavailable" : probeStatus("tomtom_flow"),
       latencyMs: probeComponent("tomtom_flow")?.latency_ms ?? undefined,
       details: probeComponent("tomtom_flow")?.error || probeComponent("tomtom_flow")?.details || "Provider status is not available",
       verifiedDirectly: probeComponent("tomtom_flow")?.status === "available",
@@ -206,7 +209,7 @@ export const SystemStatusPage: React.FC = () => {
       name: "TomTom Traffic Incidents API",
       type: "External Live Provider",
       endpoint: "Traffic Services v5 Incident Details",
-      status: integrationError ? "unhealthy" : probeStatus("tomtom_incidents"),
+      status: integrationError ? "unavailable" : probeStatus("tomtom_incidents"),
       latencyMs: probeComponent("tomtom_incidents")?.latency_ms ?? undefined,
       details: probeComponent("tomtom_incidents")?.error || probeComponent("tomtom_incidents")?.details || "Provider status is not available",
       verifiedDirectly: probeComponent("tomtom_incidents")?.status === "available",
@@ -218,7 +221,7 @@ export const SystemStatusPage: React.FC = () => {
       name: "OSRM Primary Routing",
       type: "External Routing Provider",
       endpoint: "router.project-osrm.org route service",
-      status: integrationError ? "unhealthy" : probeStatus("osrm"),
+      status: integrationError ? "unavailable" : probeStatus("osrm"),
       latencyMs: probeComponent("osrm")?.latency_ms ?? undefined,
       details: probeComponent("osrm")?.error || probeComponent("osrm")?.details || "OSRM has not been probed yet",
       verifiedDirectly: probeComponent("osrm")?.status === "available",
@@ -230,7 +233,7 @@ export const SystemStatusPage: React.FC = () => {
       name: "Alert Rules & Persistence",
       type: "PostgreSQL Alert Engine",
       endpoint: "GET /health/integrations (alert tables)",
-      status: integrationError ? "unhealthy" : probeStatus("alert_store"),
+      status: integrationError ? "unavailable" : probeStatus("alert_store"),
       latencyMs: probeComponent("alert_store")?.latency_ms ?? undefined,
       details: probeComponent("alert_store")?.error || probeComponent("alert_store")?.details || "Alert store status is not available",
       verifiedDirectly: true,
@@ -242,15 +245,15 @@ export const SystemStatusPage: React.FC = () => {
       name: "YOLO Computer Vision Worker",
       type: "Object Tracking Pipeline",
       endpoint: "Video Inference Pipeline",
-      status: "unverified",
-      details: "Computer vision processing pipeline runs as an asynchronous background worker without a direct REST health endpoint.",
-      verifiedDirectly: false,
+      status: integrationError ? "unavailable" : probeStatus("yolo"),
+      details: probeComponent("yolo")?.details || "Video worker status unavailable",
+      verifiedDirectly: true,
       lastSuccess: null,
       error: null,
     },
   ];
 
-  const anyFailures = probes.filter((p) => p.status === "unhealthy");
+  const anyFailures = probes.filter((p) => p.status === "unavailable");
 
   return (
     <div className="space-y-6">
@@ -276,7 +279,7 @@ export const SystemStatusPage: React.FC = () => {
           <p className="font-semibold text-blue-100">Verified Health Reporting Protocol</p>
           <p className="text-blue-300/90 leading-relaxed">
             RouteX strictly verifies components through authentic HTTP/PostGIS/Redis endpoint probes.
-            Kafka is checked for broker TCP reachability; provider connectivity reflects the last real traffic request, and health refresh does not spend TomTom quota. YOLO remains unverified because its worker is asynchronous and has no health endpoint.
+            Kafka is checked for broker TCP reachability; provider connectivity reflects the last real traffic request, and health refresh does not spend TomTom quota. YOLO reports the uploaded-video worker job state; idle means awaiting input. TCP reachability alone does not verify Kafka consumption.
           </p>
         </div>
       </div>
@@ -286,7 +289,7 @@ export const SystemStatusPage: React.FC = () => {
         {probes.map((probe) => {
           const isHealthy = probe.status === "healthy";
           const isChecking = probe.status === "checking";
-          const isUnverified = probe.status === "unverified";
+          const isUnverified = ["unverified", "idle", "degraded", "not_configured"].includes(probe.status);
 
           return (
             <div
@@ -312,12 +315,12 @@ export const SystemStatusPage: React.FC = () => {
                   ) : isUnverified ? (
                     <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
                       <HelpCircle className="w-3 h-3" />
-                      Unverified
+                      {probe.status === "not_configured" ? "Not configured" : probe.status === "idle" ? "Idle / awaiting input" : probe.status === "degraded" ? "Degraded" : "Unverified"}
                     </span>
                   ) : (
                     <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
                       <ShieldAlert className="w-3 h-3" />
-                      Failed
+                      Unavailable
                     </span>
                   )}
                 </div>
@@ -342,7 +345,7 @@ export const SystemStatusPage: React.FC = () => {
               </div>
 
               <div className="mt-4 pt-3 border-t border-slate-800/80 text-[10px] text-slate-400 flex justify-between items-center">
-                <span>Direct Probe: {probe.verifiedDirectly ? "Yes (HTTP)" : "No HTTP Endpoint"}</span>
+                <span>Evidence: {probe.verifiedDirectly ? "Service probe / job state" : "Last provider observation"}</span>
                 <span>Port 8001</span>
               </div>
             </div>
@@ -412,14 +415,14 @@ export const SystemStatusPage: React.FC = () => {
             <h3 className="text-sm font-semibold text-white">API Diagnostic & Failure Ledger</h3>
           </div>
           <span className="text-[11px] text-slate-400">
-            {anyFailures.length === 0 ? "All verified endpoints healthy" : `${anyFailures.length} issue(s) detected`}
+            {anyFailures.length === 0 ? "No failed probes; review idle and unverified components" : `${anyFailures.length} issue(s) detected`}
           </span>
         </div>
 
         {anyFailures.length === 0 ? (
           <div className="p-3.5 rounded-lg bg-emerald-950/20 border border-emerald-900/40 text-xs text-emerald-300 flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            <span>No active API connection failures. All probed REST endpoints responded with HTTP 200.</span>
+            <span>No failed dependency probes. Idle, unconfigured, and unverified components are listed above.</span>
           </div>
         ) : (
           <div className="space-y-2">

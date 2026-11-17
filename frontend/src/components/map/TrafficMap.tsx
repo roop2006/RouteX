@@ -4,6 +4,7 @@ import type { GeoJsonObject } from "geojson";
 import type { NearbyTrafficEvent, Intersection, RoadSegment, TrafficZone } from "../../types/geography";
 import { TrafficEventMarker, IntersectionMarker } from "./TrafficMarker";
 import { Layers, Eye, EyeOff } from "lucide-react";
+import { RouteAlertLayer } from "./RouteAlertLayer";
 
 interface TrafficMapProps {
   events?: NearbyTrafficEvent[];
@@ -263,6 +264,7 @@ export const TrafficMap: React.FC<TrafficMapProps> = ({
               onSelect={onSelectEvent}
             />
           ))}
+        <RouteAlertLayer showRoute />
       </MapContainer>
     </div>
   );

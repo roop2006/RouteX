@@ -238,8 +238,11 @@ def test_route_analysis_with_tomtom_corridor(db):
     assert resp.corridor.telemetry_status == "AVAILABLE"
     assert resp.corridor.telemetry_sample_count > 0
     assert resp.corridor.observed_average_speed is not None
-    assert resp.ai_prediction.status == "AVAILABLE"
-    assert resp.ai_prediction.model_name == "routex_production_predictor"
+    assert resp.ai_prediction.status in {"AVAILABLE", "INSUFFICIENT_DATA"}
+    if resp.ai_prediction.status == "AVAILABLE":
+        assert resp.corridor.observed_total_vehicles is not None
+    if resp.ai_prediction.status == "AVAILABLE":
+        assert resp.ai_prediction.model_name == "routex_production_predictor"
     assert resp.traffic_provider is not None
 
 

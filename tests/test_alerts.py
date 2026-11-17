@@ -29,8 +29,9 @@ def redis_offline(monkeypatch):
 
 def test_alert_generation_spatial_filter_lifecycle_and_notification(client, redis_offline):
     event_id = f"alert-test:{uuid4()}"
+    event_source = f"test_traffic_sensor_{uuid4().hex}"
     response = client.post("/alerts/evaluate", json={
-        "source": "test_traffic_sensor",
+        "source": event_source,
         "source_event_id": event_id,
         "timestamp": datetime.utcnow().isoformat(),
         "intersection_id": "INT_001",
@@ -47,10 +48,10 @@ def test_alert_generation_spatial_filter_lifecycle_and_notification(client, redi
     assert {alert["rule_key"] for alert in alerts} >= {
         "congestion_high", "congestion_critical", "significant_speed_reduction", "traffic_delay"
     }
-    assert all(alert["source"] == "test_traffic_sensor" for alert in alerts)
+    assert all(alert["source"] == event_source for alert in alerts)
 
     duplicate = client.post("/alerts/evaluate", json={
-        "source": "test_traffic_sensor",
+        "source": event_source,
         "source_event_id": event_id,
         "timestamp": datetime.utcnow().isoformat(),
         "latitude": 13.0827,
@@ -71,7 +72,8 @@ def test_alert_generation_spatial_filter_lifecycle_and_notification(client, redi
     })
     assert route.status_code == 200, route.text
     route_alerts = route.json()
-    assert {item["alert"]["id"] for item in route_alerts} == {alert["id"] for alert in alerts}
+    # Existing real incidents may also affect this corridor.
+    assert {alert["id"] for alert in alerts} <= {item["alert"]["id"] for item in route_alerts}
     assert all(item["distance_to_route_meters"] < 350 for item in route_alerts)
     assert all(item["distance_along_route_meters"] is not None for item in route_alerts)
 

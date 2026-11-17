@@ -7,7 +7,7 @@ Integrates TomTom Traffic Flow and Traffic Incidents APIs with:
 - Ingestion into PostgreSQL / PostGIS with strict source provenance ('tomtom_traffic_flow', 'tomtom_traffic_incidents')
 - Explicit feature extraction for RouteX ML prediction models
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import math
@@ -72,8 +72,10 @@ class TomTomTrafficService:
         self._lock = threading.Lock()
         self._flow_inflight: dict[str, threading.Event] = {}
         self._incident_inflight: dict[str, threading.Event] = {}
+        self._incident_errors: dict[str, tuple[str, datetime]] = {}
+        self._flow_retry_after: Optional[datetime] = None
         self._http_client = httpx.Client(
-            timeout=httpx.Timeout(connect=2.0, read=4.0, write=2.0, pool=1.0),
+            timeout=httpx.Timeout(connect=1.0, read=2.0, write=1.0, pool=0.5),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             trust_env=True,
         )
@@ -115,14 +117,14 @@ class TomTomTrafficService:
 
     def _is_rate_limited(self) -> bool:
         """Checks whether the circuit breaker is active after an HTTP 429."""
-        if self._circuit_breaker_until and datetime.now() < self._circuit_breaker_until:
+        if self._circuit_breaker_until and datetime.now(timezone.utc).replace(tzinfo=None) < self._circuit_breaker_until:
             return True
         self._circuit_breaker_until = None
         return False
 
     def _trigger_backoff(self, seconds: int = 60):
         """Activates circuit breaker for specified seconds following a 429 rate limit."""
-        self._circuit_breaker_until = datetime.now() + timedelta(seconds=seconds)
+        self._circuit_breaker_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=seconds)
         self.stats["rate_limit_hits"] += 1
         logger.warning(
             f"TomTom API rate limit encountered. Pausing external requests for {seconds}s."
@@ -175,7 +177,7 @@ class TomTomTrafficService:
         grid_lng = round(lng, 3)
         cache_key = f"{grid_lat}:{grid_lng}:{zoom}:{style}"
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         stale_data = None
         wait_for: threading.Event | None = None
         owner_event: threading.Event | None = None
@@ -201,16 +203,20 @@ class TomTomTrafficService:
             wait_for.wait(timeout=8.5)
             with self._lock:
                 cached = self._flow_cache.get(cache_key)
-            if cached and datetime.now() < cached[1]:
+            if cached and datetime.now(timezone.utc).replace(tzinfo=None) < cached[1]:
                 self.stats["cache_hits"] += 1
-                return {**cached[0], "freshness": "CACHED", "cache_age_seconds": self._cache_age(cached[0], datetime.now())}
+                return {**cached[0], "freshness": "CACHED", "cache_age_seconds": self._cache_age(cached[0], datetime.now(timezone.utc).replace(tzinfo=None))}
             stale_data = cached[0] if cached else stale_data
-            if stale_data and (self._cache_age(stale_data, datetime.now()) or 0) <= 3600:
-                return {**stale_data, "freshness": "STALE", "cache_age_seconds": self._cache_age(stale_data, datetime.now())}
+            if stale_data and (self._cache_age(stale_data, datetime.now(timezone.utc).replace(tzinfo=None)) or 0) <= 3600:
+                return {**stale_data, "freshness": "STALE", "cache_age_seconds": self._cache_age(stale_data, datetime.now(timezone.utc).replace(tzinfo=None))}
             self.last_flow_error = "A concurrent TomTom flow request did not populate the cache."
             return None
 
         try:
+            if self._flow_retry_after and now < self._flow_retry_after:
+                if stale_data:
+                    return {**stale_data, "freshness": "STALE", "cache_age_seconds": self._cache_age(stale_data, now)}
+                return None
             if self._is_rate_limited():
                 logger.debug("TomTom request suppressed by active circuit breaker.")
                 self.last_flow_error = "TomTom rate limit is active; retry after the provider backoff period."
@@ -231,13 +237,14 @@ class TomTomTrafficService:
 
             if resp.status_code == 200:
                 raw = resp.json()
-                segment = raw.get("flowSegmentData", {})
-                current_speed = float(segment.get("currentSpeed", 0.0))
-                free_flow_speed = float(segment.get("freeFlowSpeed", current_speed or 30.0))
-                current_time = float(segment.get("currentTravelTime", 0.0))
-                free_flow_time = float(segment.get("freeFlowTravelTime", current_time or 0.0))
-                confidence = float(segment.get("confidence", 1.0))
-                frc = segment.get("frc", "FRC2")
+                segment = raw.get("flowSegmentData")
+                if not isinstance(segment, dict):
+                    raise ValueError("Invalid response: missing flowSegmentData")
+                values = [float(segment[k]) for k in ("currentSpeed", "freeFlowSpeed", "currentTravelTime", "freeFlowTravelTime", "confidence")]
+                if any(not math.isfinite(v) or v < 0 for v in values) or values[-1] > 1:
+                    raise ValueError("Invalid response: invalid flow metrics")
+                current_speed, free_flow_speed, current_time, free_flow_time, confidence = values
+                frc = segment.get("frc")
                 road_closure = bool(segment.get("roadClosure", False))
 
                 # Compute congestion and density
@@ -286,6 +293,7 @@ class TomTomTrafficService:
                     )
 
                 self.last_flow_error = None
+                self._flow_retry_after = None
                 return normalized
 
             elif resp.status_code == 429:
@@ -301,7 +309,7 @@ class TomTomTrafficService:
                 return None
             else:
                 logger.warning(
-                    f"TomTom flowSegmentData query failed with status {resp.status_code}: {resp.text[:120]}"
+                    f"TomTom flowSegmentData query failed with status {resp.status_code}"
                 )
                 self.stats["errors"] += 1
                 self.last_flow_error = f"TomTom traffic flow returned HTTP {resp.status_code}."
@@ -318,6 +326,8 @@ class TomTomTrafficService:
                 return {**stale_data, "freshness": "STALE", "cache_age_seconds": self._cache_age(stale_data, now)}
             return None
         finally:
+            if self.last_flow_error:
+                self._flow_retry_after = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=15)
             if owner_event is not None:
                 with self._lock:
                     self._flow_inflight.pop(cache_key, None)
@@ -339,17 +349,19 @@ class TomTomTrafficService:
         within the specified bounding box.
         """
         if not self.is_configured:
-            self.last_incident_error = "TOMTOM_API_KEY is not configured."
+            self.last_incident_error = request_error = "TOMTOM_API_KEY is not configured."
             return []
 
-        # Round bbox to ~1km grid for cache reuse
-        grid_min_lng = round(min_lng, 2)
-        grid_min_lat = round(min_lat, 2)
-        grid_max_lng = round(max_lng, 2)
-        grid_max_lat = round(max_lat, 2)
+        # Expand the requested box to the cache grid. Rounding only the key
+        # reused smaller responses for larger corridors and silently lost incidents.
+        grid_min_lng = math.floor(min_lng * 100) / 100
+        grid_min_lat = math.floor(min_lat * 100) / 100
+        grid_max_lng = math.ceil(max_lng * 100) / 100
+        grid_max_lat = math.ceil(max_lat * 100) / 100
         cache_key = f"{grid_min_lng}:{grid_min_lat}:{grid_max_lng}:{grid_max_lat}:{language}"
 
-        now = datetime.now()
+        request_error = None
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         wait_for: threading.Event | None = None
         owner_event: threading.Event | None = None
         with self._lock:
@@ -357,7 +369,7 @@ class TomTomTrafficService:
                 data, expire_at = self._incidents_cache[cache_key]
                 if now < expire_at:
                     self.stats["cache_hits"] += 1
-                    self.last_incident_error = None
+                    self.last_incident_error = request_error = None
                     return data
             if cache_key in self._incident_inflight:
                 wait_for = self._incident_inflight[cache_key]
@@ -369,25 +381,30 @@ class TomTomTrafficService:
             wait_for.wait(timeout=10.0)
             with self._lock:
                 cached = self._incidents_cache.get(cache_key)
-            if cached and datetime.now() < cached[1]:
+            if cached and datetime.now(timezone.utc).replace(tzinfo=None) < cached[1]:
                 self.stats["cache_hits"] += 1
                 return cached[0]
-            self.last_incident_error = "A concurrent TomTom incident request did not populate the cache."
+            self.last_incident_error = request_error = "A concurrent TomTom incident request did not populate the cache."
             return []
 
         try:
+            previous_error = self._incident_errors.get(cache_key)
+            if previous_error and now < previous_error[1]:
+                self.last_incident_error = request_error = previous_error[0]
+                return []
             if self._is_rate_limited():
-                self.last_incident_error = "TomTom rate limit is active; retry after the provider backoff period."
+                self.last_incident_error = request_error = "TomTom rate limit is active; retry after the provider backoff period."
                 return []
 
             url = f"{self.base_url}/traffic/services/5/incidentDetails"
             fields = (
                 "{incidents{type,geometry{type,coordinates},"
                 "properties{id,iconCategory,magnitudeOfDelay,events{description,code},"
-                "startTime,endTime,from,to,length,delay,roadNumbers}}}"
+                "startTime,endTime,from,to,length,delay,roadNumbers,timeValidity,lastReportTime,"
+                "tmc{direction}}}}"
             )
             params = {
-                "bbox": f"{min_lng},{min_lat},{max_lng},{max_lat}",
+                "bbox": f"{grid_min_lng},{grid_min_lat},{grid_max_lng},{grid_max_lat}",
                 "fields": fields,
                 "language": language,
                 "timeValidityFilter": "present",
@@ -401,12 +418,18 @@ class TomTomTrafficService:
 
             if resp.status_code == 200:
                 raw = resp.json()
-                raw_incidents = raw.get("incidents", [])
+                if not isinstance(raw, dict) or not isinstance(raw.get("incidents"), list):
+                    raise ValueError("Invalid response: incidents must be an array")
+                raw_incidents = raw["incidents"]
                 parsed_incidents: list[dict[str, Any]] = []
 
                 for inc in raw_incidents:
                     props = inc.get("properties", {})
                     geom = inc.get("geometry", {})
+                    if not props.get("id"):
+                        raise ValueError("Invalid response: incident ID is missing")
+                    from backend.app.schemas.alerts import validate_geometry
+                    validate_geometry(geom, allow_point=True)
                     icon_cat = int(props.get("iconCategory") or 0)
                     mag = int(props.get("magnitudeOfDelay") or 0)
 
@@ -433,7 +456,7 @@ class TomTomTrafficService:
                             centroid_lng, centroid_lat = float(coords[mid_idx][0]), float(coords[mid_idx][1])
 
                     parsed_incidents.append({
-                        "id": str(props.get("id") or f"INC_{icon_cat}_{len(parsed_incidents)}"),
+                        "id": str(props["id"]),
                         "icon_category": icon_cat,
                         "category_name": TOMTOM_ICON_CATEGORIES.get(icon_cat, "Incident"),
                         "magnitude_of_delay": mag,
@@ -445,6 +468,11 @@ class TomTomTrafficService:
                         "to_road": props.get("to"),
                         "start_time": props.get("startTime"),
                         "end_time": props.get("endTime"),
+                        "time_validity": props.get("timeValidity"),
+                        "updated_at": props.get("lastReportTime"),
+                        "road_numbers": props.get("roadNumbers") or [],
+                        "tmc": props.get("tmc"),
+                        "retrieved_at": now.isoformat(),
                         "geometry": geom,
                         "centroid_lat": centroid_lat,
                         "centroid_lng": centroid_lng,
@@ -460,34 +488,56 @@ class TomTomTrafficService:
                         now + timedelta(seconds=self.incidents_ttl),
                     )
 
-                self.last_incident_error = None
+                self.last_incident_error = request_error = None
+                self._incident_errors.pop(cache_key, None)
                 return parsed_incidents
 
             elif resp.status_code == 429:
                 self._trigger_backoff(60)
-                self.last_incident_error = "TomTom incident service returned HTTP 429 (rate limited)."
+                self.last_incident_error = request_error = "TomTom incident service returned HTTP 429 (rate limited)."
                 return []
             elif resp.status_code in (401, 403):
-                self.last_incident_error = f"TomTom authentication/permission failure (HTTP {resp.status_code})."
+                self.last_incident_error = request_error = f"TomTom authentication/permission failure (HTTP {resp.status_code})."
                 self.stats["errors"] += 1
                 return []
             else:
                 logger.warning(f"TomTom incidentDetails returned status {resp.status_code}")
                 self.stats["errors"] += 1
-                self.last_incident_error = f"TomTom incident service returned HTTP {resp.status_code}."
+                self.last_incident_error = request_error = f"TomTom incident service returned HTTP {resp.status_code}."
                 return []
 
         except Exception as exc:
             self.incident_connectivity_status = "unavailable"
-            self.last_incident_error = self._safe_request_error("incident", exc)
+            self.last_incident_error = request_error = self._safe_request_error("incident", exc)
             logger.warning(self.last_incident_error)
             self.stats["errors"] += 1
             return []
         finally:
+            if request_error:
+                self._incident_errors[cache_key] = (request_error, datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=15))
             if owner_event is not None:
                 with self._lock:
                     self._incident_inflight.pop(cache_key, None)
                     owner_event.set()
+
+    def get_incident_snapshot(self, min_lng, min_lat, max_lng, max_lat):
+        """Request-scoped availability; an empty successful response is valid data."""
+        key = f"{math.floor(min_lng * 100) / 100}:{math.floor(min_lat * 100) / 100}:{math.ceil(max_lng * 100) / 100}:{math.ceil(max_lat * 100) / 100}:en-GB"
+        if not self.is_configured:
+            return {"status": "NOT_CONFIGURED", "incidents": [], "error": "TOMTOM_API_KEY is not configured.", "checked_at": None}
+        self.get_incident_details(min_lng, min_lat, max_lng, max_lat)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with self._lock:
+            cached = self._incidents_cache.get(key)
+            failure = self._incident_errors.get(key)
+        if cached and now < cached[1]:
+            return {"status": "AVAILABLE", "incidents": cached[0], "error": None,
+                    "checked_at": (cached[1] - timedelta(seconds=self.incidents_ttl)).isoformat(), "freshness": "CACHED"}
+        error = failure[0] if failure else "Incident request did not complete."
+        if cached and (now - cached[1]).total_seconds() <= 3600:
+            return {"status": "STALE", "incidents": cached[0], "error": error,
+                    "checked_at": (cached[1] - timedelta(seconds=self.incidents_ttl)).isoformat(), "freshness": "STALE"}
+        return {"status": "UNAVAILABLE", "incidents": [], "error": error, "checked_at": None}
 
     # -------------------------------------------------------------------------
     # 3. Raster and Vector Tiles (Traffic Flow & Incidents)
@@ -509,7 +559,7 @@ class TomTomTrafficService:
             return None
 
         cache_key = f"{layer}:{style}:{zoom}:{x}:{y}.{format}"
-        now = datetime.now()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         with self._lock:
             if cache_key in self._tile_cache:
                 data, expire_at = self._tile_cache[cache_key]
@@ -552,7 +602,7 @@ class TomTomTrafficService:
                 self._trigger_backoff(60)
             return None
         except Exception as exc:
-            logger.warning(f"TomTom tile request error: {exc}")
+            logger.warning(self._safe_request_error("tile", exc))
             return None
 
     # -------------------------------------------------------------------------
@@ -588,7 +638,7 @@ class TomTomTrafficService:
             sample_indices = [int(step * (i + 1)) for i in range(max_sample_points)]
 
         flow_observations: list[dict[str, Any]] = []
-        now = datetime.now()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         from concurrent.futures import ThreadPoolExecutor
 
@@ -596,13 +646,20 @@ class TomTomTrafficService:
             pt = route_coords[idx]
             return self.get_flow_segment_data(pt[1], pt[0])
 
-        with ThreadPoolExecutor(max_workers=min(len(sample_indices) or 1, 5)) as executor:
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            incident_future = executor.submit(self.get_incident_snapshot, min_lng, min_lat, max_lng, max_lat)
             raw_flow_results = list(executor.map(_fetch_point, sample_indices))
+            snapshot = incident_future.result()
         flow_observations = [f for f in raw_flow_results if f is not None]
         persistable_flow = [f for f in flow_observations if f.get("freshness", "FRESH") == "FRESH"]
 
         # 3. Query incident details for the corridor bbox
-        corridor_incidents = self.get_incident_details(min_lng, min_lat, max_lng, max_lat)
+        from backend.app.services.alert_service import match_route_incidents, sync_incident_alerts
+        if snapshot["status"] == "AVAILABLE":
+            sync_incident_alerts(db, snapshot["incidents"], (min_lng, min_lat, max_lng, max_lat))
+        corridor_incidents = match_route_incidents(db, {"type": "LineString", "coordinates": route_coords}, snapshot["incidents"])
+        if snapshot["status"] != "AVAILABLE":
+            corridor_incidents = []  # Never refresh persistence from stale provider snapshots.
 
         # 4. Persist flow observations to PostGIS (traffic_stream_events)
         ingested_events: list[TrafficStreamEvent] = []
@@ -627,19 +684,20 @@ class TomTomTrafficService:
 
             if not recent_exists:
                 # Estimate vehicle count: free flow carries ~10-14 vehicles/500m; high congestion ~30-45
-                est_vehicles = int(12 + (30 * flow["density"]))
+                est_vehicles = None  # Traffic Flow does not measure vehicle counts.
 
                 event = TrafficStreamEvent(
                     total_vehicles=est_vehicles,
                     average_speed=flow["current_speed"],
                     density=flow["density"],
                     congestion_level=flow["congestion_level"],
-                    vehicle_types={"car": int(est_vehicles * 0.6), "two_wheeler": int(est_vehicles * 0.3), "bus": int(est_vehicles * 0.1)},
+                    vehicle_types={},
                     lane_counts={"delay_seconds": flow["delay_seconds"]},
                     direction_counts={"current_travel_time": flow["current_travel_time"], "free_flow_travel_time": flow["free_flow_travel_time"]},
                     events=[
                         {
                             "source": "tomtom_traffic_flow",
+                            "vehicle_count_available": False,
                             "provider": "TomTom",
                             "frc": flow["frc"],
                             "free_flow_speed": flow["free_flow_speed"],
@@ -677,11 +735,12 @@ class TomTomTrafficService:
                     {"lng": c_lng, "lat": c_lat, "cutoff": now - timedelta(seconds=600)},
                 ).first()
 
-                if not inc_exists:
+                if not inc_exists and not db.query(TrafficStreamEvent.id).filter_by(source_event_id=f"tomtom-incident:{inc['id']}:{snapshot['checked_at']}").first():
                     inc_event = TrafficStreamEvent(
-                        total_vehicles=5,
-                        average_speed=0.0,
-                        density=1.0 if inc["delay_seconds"] > 0 else 0.5,
+                        source_event_id=f"tomtom-incident:{inc['id']}:{snapshot['checked_at']}",
+                        total_vehicles=None,
+                        average_speed=None,
+                        density=None,
                         congestion_level="HIGH" if inc["magnitude_of_delay"] >= 2 else "MEDIUM",
                         vehicle_types={},
                         lane_counts={"delay_seconds": inc["delay_seconds"]},
@@ -692,6 +751,7 @@ class TomTomTrafficService:
                                 "provider": "TomTom",
                                 "incident_id": inc["id"],
                                 "icon_category": inc["icon_category"],
+                                "magnitude_of_delay": inc["magnitude_of_delay"],
                                 "category_name": inc["category_name"],
                                 "description": inc["description"],
                                 "delay_seconds": inc["delay_seconds"],
@@ -719,7 +779,9 @@ class TomTomTrafficService:
                 for event in ingested_events:
                     db.refresh(event)
                     metadata = event.events[0] if isinstance(event.events, list) and event.events else {}
-                    event_source_id = metadata.get("incident_id") or f"tomtom-flow:{event.id}"
+                    if metadata.get("source") == "tomtom_traffic_incidents":
+                        continue  # Provider lifecycle is synchronized independently of telemetry inserts.
+                    event_source_id = f"tomtom-flow:{event.id}"
                     process_alert_event(db, {
                         "source": metadata.get("source", "tomtom_traffic_flow"),
                         "source_event_id": event_source_id,
@@ -742,6 +804,8 @@ class TomTomTrafficService:
 
         return {
             "flow_count": len(flow_observations),
+            "incident_status": snapshot["status"],
+            "provider_error": snapshot.get("error") or self.last_flow_error,
             "incident_count": len(corridor_incidents),
             "incidents": corridor_incidents,
             "flow_observations": flow_observations,
@@ -755,7 +819,7 @@ class TomTomTrafficService:
         Fetches live TomTom traffic flow for monitored arterial junctions
         and active incidents across Chennai. Returns a comprehensive snapshot.
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         # Fetch registered intersections from database
         intersections = db.execute(
             text("SELECT intersection_id, name, latitude, longitude FROM intersections LIMIT 6")

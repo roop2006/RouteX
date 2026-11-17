@@ -1,5 +1,15 @@
 # RouteX Integration Debugging Progress
 
+## Phase 9 integration repair — 2026-11-15
+
+- The [complete repair report](docs/PHASE9_INTEGRATION_REPORT.md) contains root causes, every changed file, verification evidence and exact startup commands. This update supersedes the historical network blockers and incomplete test runs below.
+- Fixed implicit Redis retries (26.31-second failed probe), bounded provider/database waits, restarted local Docker services and the stalled backend. Real TomTom Flow/Incidents and OSRM calls succeeded outside the network sandbox.
+- Connected route alerts, map markers, live telemetry and prediction state to the shared selected geometry. Retained existing PostGIS roads/intersections queries; incident matching uses full geometry and route isolation. Updates, expiry and successful empty responses reconcile persistent alerts without duplicates.
+- Removed invented provider counts and automatic synthetic profile seeding; preserved old records, model artifacts and training code. Missing measurements display as unavailable and cannot feed measured-input prediction APIs.
+- Final full suite, including an isolated real sample-video → Kafka → consumer processing → PostgreSQL/Redis → FastAPI test: **110 passed, 484 warnings in 27.83 seconds**. Frontend lint/build passed. Browser route/alert/map checks passed. Final live endpoint latency was 0.703 seconds; incidents 1.359 seconds (individual measurements).
+- The live pipeline test caught and corrected an installed Kafka-library timeout-option incompatibility. It cleans up its topic/cache keys and rolls back database writes.
+- Direction compatibility remains unverified without matching TMC references. Kafka diagnostics report TCP connectivity as degraded, not consumer health; idle YOLO correctly waits for input. Physical camera deployment and sustained operation require monitoring. Phase 10 was not started.
+
 Updated: 2026-11-06
 
 ## Findings and fixes

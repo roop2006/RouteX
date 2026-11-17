@@ -3,7 +3,7 @@ Live Traffic Service for RouteX.
 Handles live traffic ingestion, provider integration, multi-tier caching (Redis + PostgreSQL),
 and robust fallback to prevent infinite loading when streaming workers are idle.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -63,12 +63,12 @@ class LiveTrafficService:
                     DEFAULT_CAMERA_LATITUDE, DEFAULT_CAMERA_LONGITUDE
                 )
                 if tomtom_flow:
-                    est_veh = int(12 + (30 * tomtom_flow["density"]))
+                    est_veh = None  # Provider has no vehicle count or class distribution.
                     tt_payload = {
                         "status": "ACTIVE" if tomtom_flow.get("freshness", "FRESH") == "FRESH" else "CACHED_STREAM",
                         "source": "tomtom_traffic_flow",
                         "provider": "TomTom Traffic API",
-                        "timestamp": tomtom_flow.get("retrieved_at", datetime.now().isoformat()),
+                        "timestamp": tomtom_flow.get("retrieved_at", datetime.now(timezone.utc).replace(tzinfo=None).isoformat()),
                         "intersection_id": DEFAULT_INTERSECTION_ID,
                         "latitude": DEFAULT_CAMERA_LATITUDE,
                         "longitude": DEFAULT_CAMERA_LONGITUDE,
@@ -80,11 +80,8 @@ class LiveTrafficService:
                         "delay_seconds": tomtom_flow["delay_seconds"],
                         "confidence": tomtom_flow["confidence"],
                         "frc": tomtom_flow["frc"],
-                        "vehicle_types": {
-                            "car": int(est_veh * 0.6),
-                            "two_wheeler": int(est_veh * 0.3),
-                            "bus": int(est_veh * 0.1),
-                        },
+                        "road_closure": tomtom_flow["road_closure"],
+                        "vehicle_types": {},
                         "lane_counts": {"delay_seconds": tomtom_flow["delay_seconds"]},
                         "direction_counts": {
                             "current_travel_time": tomtom_flow["current_travel_time"],
@@ -147,6 +144,7 @@ class LiveTrafficService:
             latest_db_event = (
                 db.query(TrafficStreamEvent)
                 .filter(TrafficStreamEvent.timestamp.isnot(None))
+                .filter(text("COALESCE(events::jsonb->0->>'source', '') NOT IN ('historical_chennai_arterial_benchmark', 'tomtom_traffic_incidents')"))
                 .order_by(TrafficStreamEvent.timestamp.desc(), TrafficStreamEvent.id.desc())
                 .first()
             )
@@ -155,7 +153,7 @@ class LiveTrafficService:
                 ts_iso = (
                     latest_db_event.timestamp.isoformat()
                     if latest_db_event.timestamp
-                    else datetime.now().isoformat()
+                    else datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
                 )
                 source_meta = "database_stream_telemetry"
                 if isinstance(latest_db_event.events, dict) and latest_db_event.events.get("source"):
@@ -166,7 +164,7 @@ class LiveTrafficService:
                         source_meta = first_event["source"]
 
                 event_time = latest_db_event.timestamp
-                age_seconds = max(0, int((datetime.now() - event_time).total_seconds())) if event_time else None
+                age_seconds = max(0, int((datetime.now(timezone.utc).replace(tzinfo=None) - event_time).total_seconds())) if event_time else None
                 freshness = "UNAVAILABLE" if age_seconds is None else "FRESH" if age_seconds <= 30 else "RECENT" if age_seconds <= 300 else "HISTORICAL"
 
                 return {
@@ -176,11 +174,11 @@ class LiveTrafficService:
                     "intersection_id": latest_db_event.intersection_id or DEFAULT_INTERSECTION_ID,
                     "latitude": latest_db_event.latitude if latest_db_event.latitude is not None else DEFAULT_CAMERA_LATITUDE,
                     "longitude": latest_db_event.longitude if latest_db_event.longitude is not None else DEFAULT_CAMERA_LONGITUDE,
-                    "total_vehicles": latest_db_event.total_vehicles,
+                    "total_vehicles": None if source_meta == "tomtom_traffic_flow" else latest_db_event.total_vehicles,
                     "average_speed": round(float(latest_db_event.average_speed or 0.0), 1),
                     "density": round(float(latest_db_event.density or 0.0), 3),
                     "congestion_level": latest_db_event.congestion_level or "LOW",
-                    "vehicle_types": latest_db_event.vehicle_types or {},
+                    "vehicle_types": {} if source_meta == "tomtom_traffic_flow" else latest_db_event.vehicle_types or {},
                     "lane_counts": latest_db_event.lane_counts or {},
                     "direction_counts": latest_db_event.direction_counts or {},
                     "events": latest_db_event.events or [],
@@ -196,7 +194,7 @@ class LiveTrafficService:
                 db.close()
 
         # Tier 3: Clean unavailable payload (replaces hard 404 to stop infinite loading)
-        now_iso = datetime.now().isoformat()
+        now_iso = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         return {
             "status": "UNAVAILABLE",
             "source": "none",
@@ -204,9 +202,10 @@ class LiveTrafficService:
             "intersection_id": DEFAULT_INTERSECTION_ID,
             "latitude": DEFAULT_CAMERA_LATITUDE,
             "longitude": DEFAULT_CAMERA_LONGITUDE,
-            "total_vehicles": 0,
-            "average_speed": 0.0,
-            "density": 0.0,
+            "total_vehicles": None,
+            "average_speed": None,
+            "density": None,
+            "freshness": "UNAVAILABLE",
             "congestion_level": "UNKNOWN",
             "vehicle_types": {},
             "lane_counts": {},
@@ -226,7 +225,7 @@ class LiveTrafficService:
         Validates, normalizes, and stores an incoming live traffic observation
         into PostgreSQL/PostGIS and optionally publishes to Redis buffer.
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         ts = snapshot.get("timestamp")
         if isinstance(ts, str):
             try:
@@ -239,7 +238,6 @@ class LiveTrafficService:
             event_time = now
 
         if event_time.tzinfo is not None:
-            from datetime import timezone
             event_time = event_time.astimezone(timezone.utc).replace(tzinfo=None)
 
         lat = snapshot.get("latitude", DEFAULT_CAMERA_LATITUDE)

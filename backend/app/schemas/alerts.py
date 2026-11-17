@@ -1,11 +1,33 @@
 from datetime import datetime, timezone
 from typing import Any, Literal
+import math
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 AlertSeverity = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
 AlertStatus = Literal["ACTIVE", "ACKNOWLEDGED", "RESOLVED"]
+
+
+def validate_geometry(value: dict, *, allow_point=False):
+    if not isinstance(value, dict):
+        raise ValueError("Geometry must be GeoJSON")
+    kind, coordinates = value.get("type"), value.get("coordinates")
+    points = [coordinates] if kind == "Point" and allow_point else coordinates
+    if kind not in ({"Point", "LineString"} if allow_point else {"LineString"}):
+        raise ValueError("Unsupported geometry type")
+    if not isinstance(points, list) or len(points) < (1 if kind == "Point" else 2) or len(points) > 50000:
+        raise ValueError("Invalid geometry coordinates")
+    for point in points:
+        if not isinstance(point, list) or len(point) != 2:
+            raise ValueError("Coordinates must be [longitude, latitude] pairs")
+        if any(isinstance(v, bool) or not isinstance(v, (float, int)) or not math.isfinite(v) for v in point):
+            raise ValueError("Coordinates must be finite numbers")
+        if not (-180 <= point[0] <= 180 and -90 <= point[1] <= 90):
+            raise ValueError("Coordinates outside WGS84 bounds")
+    if kind == "LineString" and len({tuple(p) for p in points}) < 2:
+        raise ValueError("Route must have nonzero length")
+    return value
 
 
 class AlertEventInput(BaseModel):
@@ -76,9 +98,7 @@ class AlertEventInput(BaseModel):
         if value is None:
             return None
         now = datetime.now(timezone.utc)
-        # Naive values are emitted by existing local services; interpret those in
-        # the server's local timezone before persisting a consistent UTC value.
-        comparable = value.astimezone(timezone.utc)
+        comparable = (value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value).astimezone(timezone.utc)
         if (comparable - now).total_seconds() > 300:
             raise ValueError("timestamp cannot be more than five minutes in the future")
         return comparable.replace(tzinfo=None)
@@ -137,11 +157,30 @@ class RouteAlertSearch(BaseModel):
     geometry: dict[str, Any]
     corridor_meters: int = Field(default=350, ge=25, le=1000)
 
+    @field_validator("geometry")
+    @classmethod
+    def valid_route(cls, value):
+        return validate_geometry(value)
+
 
 class RouteTrafficAlertRead(BaseModel):
     alert: TrafficAlertRead
+    route_id: str | None = None
+    marker_latitude: float | None = None
+    marker_longitude: float | None = None
     distance_along_route_meters: float | None = None
     distance_to_route_meters: float | None = None
+
+
+class RouteAlertSnapshot(BaseModel):
+    route_id: str
+    status: str
+    checked_at: str | None = None
+    freshness: str | None = None
+    error: str | None = None
+    incidents: list[dict[str, Any]] = Field(default_factory=list)
+    incident_count: int = 0
+    alerts: list[RouteTrafficAlertRead] = Field(default_factory=list)
 
 
 class AlertNotificationRead(BaseModel):

@@ -1,5 +1,7 @@
 # RouteX — TomTom Traffic API Integration Architecture & Guide
 
+Updated 2026-11-15: the [Phase 9 repair report](PHASE9_INTEGRATION_REPORT.md) supersedes older verification notes below. Real Flow, Incidents and OSRM calls succeeded with network access outside the sandbox. Provider vehicle counts remain unavailable; no synthetic counts are supplied to the production predictor. Route alerts share the selected geometry and full-geometry PostGIS matching with the map.
+
 ## 1. Executive Overview
 
 RouteX integrates the TomTom Traffic API as a production-grade external real-time data source. The integration provides:
@@ -7,7 +9,7 @@ RouteX integrates the TomTom Traffic API as a production-grade external real-tim
 - Real-time traffic incident reports (stationary traffic, accidents, lane closures, roadworks) with precise bounding box spatial filtering.
 - Route-aware corridor telemetry extraction along OSRM road geometry.
 - Automated observation persistence into PostgreSQL / PostGIS with strict data provenance (`tomtom_traffic_flow` and `tomtom_traffic_incidents`).
-- Seamless feature transformation to the 15-feature RouteX production machine learning predictor (`TrafficPredictor`).
+- Existing 15-feature production predictor preserved; inference requires measured vehicle counts, speed and density from a suitable observation source.
 - Multi-tier live traffic telemetry retrieval with Redis buffer caching, TomTom live queries, and graceful standby states.
 - Secure, credential-masked proxying of TomTom map tiles to the frontend Leaflet map without exposing the API key.
 
@@ -62,7 +64,7 @@ When TomTom observations are retrieved along a route corridor or for live monito
 * **Table**: `traffic_stream_events`
 * **SRID**: `4326` (WGS 84 Point Geometry)
 * **Columns**:
-  - `total_vehicles`: Estimated from density index `int(12 + (30 * density))`
+  - `total_vehicles`: `null` because this provider does not report vehicle counts. Incident-only observations also have null speed and density.
   - `average_speed`: TomTom `currentSpeed` (km/h)
   - `density`: `max(0.0, min(1.0, 1.0 - currentSpeed / freeFlowSpeed))`
   - `congestion_level`: `"LOW"`, `"MEDIUM"`, or `"HIGH"`
@@ -80,12 +82,12 @@ RouteX maintains strict separation across prediction models:
 1. **Production Predictor (`TrafficPredictor`)**: Requires exactly 15 features:
    - 8 Base features: `total_vehicles`, `average_speed`, `density`, `hour`, `minute`, `day_of_week`, `is_weekend`, `is_peak_hour`.
    - 7 Lag & rolling features: `vehicles_lag_1`, `vehicles_lag_2`, `vehicles_lag_3`, `speed_lag_1`, `speed_lag_2`, `density_lag_1`, `density_lag_2`.
-   - TomTom observed speed and density are mapped directly into this vector.
+   - TomTom-only observations cannot satisfy the measured vehicle-count requirement. Route prediction reports `INSUFFICIENT_DATA` until suitable measured observations exist; invented counts and legacy synthetic benchmark observations are excluded.
 2. **External Predictor (`ExternalTrafficPredictor`)**: Trained on the Metro Interstate Traffic Volume dataset (Minneapolis). Strictly uses a 9-feature schema and is never applied to Chennai urban route corridors.
 
 ---
 
-## 7. Verification Results
+## 7. Historical Verification Results (superseded by the repair report)
 
 All 81 backend tests pass (100% pass rate):
 - `tests/test_tomtom_integration.py`: 8 tests passed

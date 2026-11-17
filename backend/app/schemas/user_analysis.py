@@ -31,13 +31,13 @@ class RouteTrafficObservation(BaseModel):
     intersection_id: Optional[str] = None
     latitude: float
     longitude: float
-    total_vehicles: int
+    total_vehicles: int | None
     vehicle_types: dict[str, float] = Field(default_factory=dict)
     lane_counts: dict[str, float] = Field(default_factory=dict)
     direction_counts: dict[str, float] = Field(default_factory=dict)
-    average_speed: float
+    average_speed: float | None
     free_flow_speed: Optional[float] = None
-    density: float
+    density: float | None
     congestion_level: str
     timestamp: datetime
     source: str
@@ -85,6 +85,8 @@ class CorridorZoneMatch(BaseModel):
 
 
 class CorridorDetail(BaseModel):
+    incident_status: str = "UNAVAILABLE"
+    provider_error: str | None = None
     matched_roads: list[CorridorRoadMatch]
     nearby_intersections: list[CorridorIntersectionMatch]
     traversed_zones: list[CorridorZoneMatch]
@@ -161,7 +163,7 @@ class FrameSample(BaseModel):
     second: float
     frame_index: int
     vehicles_in_frame: int
-    density: float
+    density: float | None
     speed: float
 
 
@@ -178,8 +180,8 @@ class VideoAnalysisResult(BaseModel):
     direction_counts: dict[str, float]
     line_crossing_counts: dict[str, float] = Field(default_factory=dict)
     line_crossing_total: int = 0
-    average_speed: float
-    density: float
+    average_speed: float | None
+    density: float | None
     congestion_level: str
     anomaly_events: list[dict[str, Any]]
     frame_samples: list[FrameSample]

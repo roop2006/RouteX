@@ -23,7 +23,7 @@ def nearby_events(
         SELECT
             id,
             intersection_id,
-            total_vehicles,
+            CASE WHEN COALESCE(events::jsonb->0->>'source','') LIKE 'tomtom_%' THEN NULL ELSE total_vehicles END AS total_vehicles,
             average_speed,
             density,
             congestion_level,
@@ -32,6 +32,7 @@ def nearby_events(
             timestamp
         FROM traffic_stream_events
         WHERE location IS NOT NULL
+        AND COALESCE(events::jsonb->0->>'source','') <> 'historical_chennai_arterial_benchmark'
         AND ST_DWithin(
             location::geography,
             ST_SetSRID(

@@ -10,7 +10,7 @@ import type {
 } from "../types/userAnalysis";
 
 export async function analyzeRoute(request: RouteAnalysisRequest): Promise<RouteAnalysisResponse> {
-  const response = await apiClient.post<RouteAnalysisResponse>("/analysis/route", request);
+  const response = await apiClient.post<RouteAnalysisResponse>("/analysis/route", request, { timeout: 45000 });
   return response.data;
 }
 

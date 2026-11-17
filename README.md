@@ -2,6 +2,8 @@
 
 RouteX is an intelligent traffic management and route analysis platform combining computer vision vehicle tracking, historical traffic analytics, real-time live traffic telemetry from TomTom APIs, PostGIS spatial route corridor evaluation, and machine learning traffic forecasting.
 
+See the [Phase 9 integration repair report](docs/PHASE9_INTEGRATION_REPORT.md) for current verification, service startup commands, changed files, and operating limitations (2026-11-15).
+
 ---
 
 ## Key Features

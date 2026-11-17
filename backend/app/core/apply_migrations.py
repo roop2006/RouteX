@@ -14,11 +14,22 @@ from backend.app.models import (
     TrafficAlert,
     AlertNotification,
 )
+from sqlalchemy import text
+
+
+def apply_integration_schema():
+    """Add identities and allow genuinely missing provider metrics; preserve rows."""
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE traffic_stream_events ADD COLUMN IF NOT EXISTS source_event_id VARCHAR(220)"))
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_stream_source_event ON traffic_stream_events(source_event_id)"))
+        for column in ("total_vehicles", "average_speed", "density"):
+            connection.execute(text(f"ALTER TABLE traffic_stream_events ALTER COLUMN {column} DROP NOT NULL"))
 
 
 def apply_migrations():
     print("Applying RouteX database migrations (non-destructive)...")
     Base.metadata.create_all(bind=engine)
+    apply_integration_schema()
     from backend.app.core.database import SessionLocal
     from backend.app.services.alert_service import initialize_alert_rules
     with SessionLocal() as db:

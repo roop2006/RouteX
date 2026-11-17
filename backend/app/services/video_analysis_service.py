@@ -90,6 +90,21 @@ def get_job(job_id: str) -> Optional[dict[str, Any]]:
         return None
 
 
+def worker_status() -> dict[str, Any]:
+    """Report the actual in-process job lifecycle without starting inference."""
+    with _jobs_lock:
+        jobs = list(_jobs.values())
+    active = [job for job in jobs if job["status"] in {"PENDING", "PROCESSING"}]
+    if active:
+        return {"status": "healthy", "details": f"Video worker has {len(active)} queued/running job(s).", "error": None}
+    if not (_PROJECT_ROOT / "yolo11n.pt").is_file():
+        return {"status": "not_configured", "details": "YOLO model artifact is missing.", "error": None}
+    latest = jobs[-1] if jobs else None
+    if latest and latest["status"] == "FAILED":
+        return {"status": "degraded", "details": "Last video job failed; worker awaits another input.", "error": latest.get("error")}
+    return {"status": "idle", "details": "No video job is running; awaiting uploaded or sample video. Model artifact is present; inference is not probed by this check.", "error": None}
+
+
 def cancel_job(job_id: str) -> bool:
     with _jobs_lock:
         if job_id in _jobs:

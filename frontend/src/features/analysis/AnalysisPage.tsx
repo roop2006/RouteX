@@ -62,14 +62,10 @@ export const AnalysisPage: React.FC = () => {
 
   // Aggregate stats across fetched real events
   const totalRecords = events.length;
-  const avgSpeed =
-    totalRecords > 0
-      ? events.reduce((sum, e) => sum + (e.average_speed || 0), 0) / totalRecords
-      : 0;
-  const peakVolume =
-    totalRecords > 0
-      ? Math.max(...events.map((e) => e.total_vehicles || 0))
-      : 0;
+  const measuredSpeeds = events.flatMap(e => e.average_speed == null ? [] : [e.average_speed]);
+  const avgSpeed = measuredSpeeds.length ? measuredSpeeds.reduce((a,b) => a+b,0) / measuredSpeeds.length : null;
+  const measuredCounts = events.flatMap(e => e.total_vehicles == null ? [] : [e.total_vehicles]);
+  const peakVolume = measuredCounts.length ? Math.max(...measuredCounts) : "Unavailable";
 
   // Aggregate vehicle types across all records
   const aggregatedVehicleTypes: Record<string, number> = {};
@@ -259,7 +255,7 @@ export const AnalysisPage: React.FC = () => {
                           <span className="text-[10px] text-slate-500">{evt.source || String(detail.source || "RouteX Telemetry")}</span>
                           {evt.description && <span className="block max-w-xs truncate text-[10px] text-slate-400">{evt.description}</span>}
                         </td>
-                        <td className="py-3 px-4 font-mono font-bold text-white">{evt.total_vehicles}</td>
+                        <td className="py-3 px-4 font-mono font-bold text-white">{evt.total_vehicles ?? "Unavailable"}</td>
                         <td className="py-3 px-4">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${getCongestionBadgeClass(evt.congestion_level)}`}>
                             {evt.congestion_level}

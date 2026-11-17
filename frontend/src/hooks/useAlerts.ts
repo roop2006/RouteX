@@ -35,12 +35,13 @@ export function useAlertHistory(enabled = true) {
 
 export function useRouteAlerts(routeId: string | null, geometry: Record<string, unknown> | null, enabled = true) {
   return useQuery({
-    queryKey: ["route-alerts", routeId],
+    queryKey: ["route-alerts", routeId, geometry],
     queryFn: ({ signal }) => getRouteAlerts(routeId!, geometry!, signal),
     enabled: enabled && Boolean(routeId && geometry),
-    refetchInterval: 15000,
+    refetchInterval: 60000,
+    staleTime: 30000,
     refetchIntervalInBackground: false,
-    retry: 1,
+    retry: false,
   });
 }
 

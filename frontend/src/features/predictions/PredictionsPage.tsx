@@ -37,7 +37,7 @@ export const PredictionsPage: React.FC = () => {
   const routePrediction = routeContext.selectedRoute?.ai_prediction;
 
   // Queries & Mutations
-  const { data: livePrediction, isLoading: isLoadingLive, error: liveError } = useLivePrediction();
+  const { data: livePrediction, isLoading: isLoadingLive, error: liveError } = useLivePrediction(!routeContext.selectedRoute);
   const { data: modelRegistry } = useModelRegistry();
   const { data: metrics } = usePredictionMetrics();
   const predictMutation = usePredictTraffic();

@@ -6,13 +6,13 @@ export function formatNumber(value: number, decimals = 0): string {
   });
 }
 
-export function formatSpeed(kmh: number): string {
-  if (isNaN(kmh)) return "0 km/h";
+export function formatSpeed(kmh: number | null | undefined): string {
+  if (kmh == null || !Number.isFinite(kmh)) return "Unavailable";
   return `${Math.round(kmh)} km/h`;
 }
 
-export function formatDensity(density: number): string {
-  if (isNaN(density)) return "0%";
+export function formatDensity(density: number | null | undefined): string {
+  if (density == null || !Number.isFinite(density)) return "Unavailable";
   const clamped = Math.max(0, Math.min(1, density));
   return `${Math.round(clamped * 100)}%`;
 }
@@ -25,14 +25,14 @@ export function formatConfidence(confidence: number): string {
 
 export function formatTimestamp(isoString: string | null | undefined): string {
   if (!isoString) return "N/A";
-  const date = new Date(isoString);
+  const date = new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(isoString) ? isoString : `${isoString}Z`);
   if (isNaN(date.getTime())) return "Invalid date";
   return date.toLocaleString();
 }
 
 export function formatTimeOnly(isoString: string | null | undefined): string {
   if (!isoString) return "N/A";
-  const date = new Date(isoString);
+  const date = new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(isoString) ? isoString : `${isoString}Z`);
   if (isNaN(date.getTime())) return "N/A";
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }

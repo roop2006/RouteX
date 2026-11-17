@@ -1,6 +1,7 @@
 from datetime import timezone
 
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..models.traffic_stream_event import TrafficStreamEvent
@@ -55,17 +56,29 @@ def get_traffic_events(
     limit: int = 50,
     congestion_level: str | None = None
 ):
-    query = db.query(TrafficStreamEvent)
+    query = db.query(TrafficStreamEvent).filter(text("COALESCE(events::jsonb->0->>'source','') <> 'historical_chennai_arterial_benchmark'"))
 
     if congestion_level:
         query = query.filter(
             TrafficStreamEvent.congestion_level == congestion_level
         )
 
-    return (
+    rows = (
         query
         .order_by(TrafficStreamEvent.id.desc())
         .offset(skip)
         .limit(limit)
         .all()
     )
+
+    result = []
+    for row in rows:
+        payload = {column.name: getattr(row, column.name) for column in TrafficStreamEvent.__table__.columns if column.name != "location"}
+        metadata = next((m for m in (row.events or []) if isinstance(m, dict)), {})
+        source = metadata.get("source", "")
+        if source.startswith("tomtom_"):
+            payload.update(total_vehicles=None, vehicle_types={})
+        if source == "tomtom_traffic_incidents":
+            payload.update(average_speed=None, density=None, congestion_level="UNKNOWN")
+        result.append(payload)
+    return result

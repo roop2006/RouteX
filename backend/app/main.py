@@ -31,22 +31,22 @@ from .api.alerts import router as alerts_router
 from .api.health import router as integration_health_router
 
 from .services.road_network_service import ensure_arterial_network
-from .services.traffic_ingestion_service import seed_corridor_historical_observations
+import logging
+from .core.apply_migrations import apply_integration_schema
 
-Base.metadata.create_all(bind=engine)
-
-# Ensure arterial road network and verified baseline corridor observations are initialized
+# Keep diagnostics available even when PostgreSQL is temporarily unavailable.
 try:
+    Base.metadata.create_all(bind=engine)
+    apply_integration_schema()
     _init_db = SessionLocal()
     try:
         from .services.alert_service import initialize_alert_rules
         initialize_alert_rules(_init_db)
         ensure_arterial_network(_init_db)
-        seed_corridor_historical_observations(_init_db)
     finally:
         _init_db.close()
-except Exception:
-    pass
+except Exception as exc:
+    logging.getLogger(__name__).warning("Database initialization unavailable (%s); run the migration helper after restoring connectivity", type(exc).__name__)
 
 app = FastAPI(title="RouteX API")
 

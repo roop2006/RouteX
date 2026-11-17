@@ -51,6 +51,9 @@ def live_prediction(db: Session = Depends(get_db)):
             detail="No live traffic data available in Redis or database"
         )
 
+    if any(traffic_data.get(key) is None for key in ("total_vehicles", "average_speed", "density")):
+        raise HTTPException(status_code=422, detail="Prediction requires observed vehicle count, speed, and density; the current provider does not supply all inputs.")
+
     try:
 
         now = datetime.now()

@@ -13,9 +13,9 @@ import { formatTimeOnly } from "../../utils/formatters";
 
 export interface TrafficChartDataPoint {
   timestamp: string;
-  total_vehicles: number;
-  average_speed?: number;
-  density?: number;
+  total_vehicles: number | null;
+  average_speed?: number | null;
+  density?: number | null;
   congestion_level?: string;
 }
 

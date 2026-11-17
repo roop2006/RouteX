@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 
 from geoalchemy2.elements import WKTElement
+from sqlalchemy import text
 
 from backend.app.core.database import SessionLocal
 from backend.app.core.geo_config import POSTGIS_SRID
@@ -21,6 +22,11 @@ def save_traffic_event(data: dict, source_event_id: str | None = None):
 
     db = SessionLocal()
     try:
+        if source_event_id:
+            db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"), {"key": source_event_id})
+            existing = db.query(TrafficStreamEvent).filter_by(source_event_id=source_event_id).first()
+            if existing:
+                return existing
         latitude = normalized.get("latitude")
         longitude = normalized.get("longitude")
         location = None
@@ -28,6 +34,7 @@ def save_traffic_event(data: dict, source_event_id: str | None = None):
             location = WKTElement(f"POINT({longitude} {latitude})", srid=POSTGIS_SRID)
 
         event = TrafficStreamEvent(
+            source_event_id=source_event_id,
             total_vehicles=normalized.get("total_vehicles", 0),
             vehicle_types=normalized.get("vehicle_types", {}),
             lane_counts=normalized.get("lane_counts", {}),
@@ -43,13 +50,15 @@ def save_traffic_event(data: dict, source_event_id: str | None = None):
             timestamp=normalized.get("timestamp") or datetime.now(timezone.utc),
         )
         db.add(event)
-        db.commit()
+        db.flush()
         db.refresh(event)
 
         alert_payload = dict(normalized)
         if alert_payload["source"].lower().startswith("cam_") and alert_payload.get("events"):
             alert_payload["anomaly_detected"] = True
-        process_alert_event(db, alert_payload, source_event_id=source_event_id)
+        process_alert_event(db, alert_payload, source_event_id=source_event_id, commit=False)
+        db.commit()
+        db.refresh(event)
         logger.info(
             "Kafka traffic event persisted: event_id=%s source=%s",
             event.id,

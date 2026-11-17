@@ -72,6 +72,8 @@ export interface CorridorZoneMatch {
 }
 
 export interface CorridorDetail {
+  incident_status?: string;
+  provider_error?: string | null;
   matched_roads: CorridorRoadMatch[];
   nearby_intersections: CorridorIntersectionMatch[];
   traversed_zones: CorridorZoneMatch[];
@@ -98,13 +100,13 @@ export interface RouteTrafficObservation {
   intersection_id?: string | null;
   latitude: number;
   longitude: number;
-  total_vehicles: number;
+  total_vehicles: number | null;
   vehicle_types: Record<string, number>;
   lane_counts: Record<string, number>;
   direction_counts: Record<string, number>;
-  average_speed: number;
+  average_speed: number | null;
   free_flow_speed?: number | null;
-  density: number;
+  density: number | null;
   congestion_level: string;
   timestamp: string;
   source: string;
@@ -144,7 +146,7 @@ export interface FrameSample {
   second: number;
   frame_index: number;
   vehicles_in_frame: number;
-  density: number;
+  density: number | null;
   speed: number;
 }
 
@@ -169,8 +171,8 @@ export interface VideoAnalysisResult {
   direction_counts: Record<string, number>;
   line_crossing_counts?: Record<string, number>;
   line_crossing_total?: number;
-  average_speed: number;
-  density: number;
+  average_speed: number | null;
+  density: number | null;
   congestion_level: string;
   anomaly_events: Array<Record<string, unknown>>;
   frame_samples: FrameSample[];
@@ -225,7 +227,7 @@ export interface CombinedAnalysisResponse {
     corridor_status: string;
     video_vehicles_observed?: number;
     video_measured_speed?: number;
-    video_measured_density?: number;
+    video_measured_density?: number | null;
     video_congestion_level?: string;
     combined_ai_confidence?: number | null;
     traffic_note?: string;

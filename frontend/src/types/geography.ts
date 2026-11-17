@@ -1,9 +1,9 @@
 export interface NearbyTrafficEvent {
   id: number;
   intersection_id: string | null;
-  total_vehicles: number;
-  average_speed: number;
-  density: number;
+  total_vehicles: number | null;
+  average_speed: number | null;
+  density: number | null;
   congestion_level: string;
   latitude: number;
   longitude: number;

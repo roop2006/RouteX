@@ -6,6 +6,7 @@ import type { RouteCoordinates, RouteAlternative } from "../../../types/userAnal
 import type { Intersection, RoadSegment, TrafficZone } from "../../../types/geography";
 import { IntersectionMarker } from "../../../components/map/TrafficMarker";
 import { MapPin, Navigation, Eye, EyeOff, Layers } from "lucide-react";
+import { RouteAlertLayer } from "../../../components/map/RouteAlertLayer";
 
 // Custom Origin Marker Icon (Green 'A')
 function createOriginIcon(label = "A"): L.DivIcon {
@@ -428,6 +429,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
             </Popup>
           </Marker>
         )}
+        <RouteAlertLayer />
       </MapContainer>
     </div>
   );

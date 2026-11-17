@@ -31,12 +31,14 @@ const severityClasses: Record<string, string> = {
 function AlertCard({
   alert,
   distanceAlongRoute,
+  distanceFromRoute,
   routeSpecific,
   onAction,
   busy,
 }: {
   alert: TrafficAlert;
   distanceAlongRoute?: number | null;
+  distanceFromRoute?: number | null;
   routeSpecific?: boolean;
   onAction: (alertId: number, action: "acknowledge" | "resolve") => void;
   busy: boolean;
@@ -64,8 +66,9 @@ function AlertCard({
         {alert.intersection_id && <span><MapPin className="mr-1 inline h-3 w-3" />{alert.intersection_id}</span>}
         {alert.latitude != null && alert.longitude != null && <span>{alert.latitude.toFixed(4)}, {alert.longitude.toFixed(4)}</span>}
         {distanceAlongRoute != null && <span>{Math.round(distanceAlongRoute)} m along selected route</span>}
+        {distanceFromRoute != null && <span>{Math.round(distanceFromRoute)} m from route</span>}
         <span>Source: {alert.source}</span>
-        <span><Clock3 className="mr-1 inline h-3 w-3" />{formatTimestamp(alert.source_timestamp || alert.created_at)}</span>
+        <span><Clock3 className="mr-1 inline h-3 w-3" />{formatTimestamp(alert.updated_at)}</span>
       </div>
 
       {alert.status !== "RESOLVED" && (
@@ -140,7 +143,7 @@ export const AlertsPage: React.FC = () => {
   const rulePatch = usePatchAlertRule();
 
   const activeAlerts = activeQuery.data || [];
-  const matchedAlerts = routeQuery.data || [];
+  const matchedAlerts = routeQuery.data?.alerts || [];
   const routeAlertIds = new Set(matchedAlerts.map((item) => item.alert.id));
   const generalAlerts = hasRoute ? activeAlerts.filter((item) => !routeAlertIds.has(item.id) && !item.route_id) : activeAlerts;
 
@@ -155,7 +158,7 @@ export const AlertsPage: React.FC = () => {
     <div className="space-y-6">
       <PageHeader
         title="Traffic Alerts"
-        subtitle={hasRoute ? "Active alerts matched against the selected route corridor, with citywide alerts kept separate" : "Validated traffic conditions and incidents with acknowledgement and resolution history"}
+        subtitle={hasRoute ? "Provider incidents and alerts matched against the selected route corridor" : "Validated traffic conditions and incidents with acknowledgement and resolution history"}
         badge={<span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-xs text-blue-300"><BellRing className="mr-1 inline h-3.5 w-3.5" />{statisticsQuery.data?.active ?? 0} active</span>}
       />
 
@@ -177,14 +180,14 @@ export const AlertsPage: React.FC = () => {
                 <div><h2 className="text-sm font-semibold text-white"><Route className="mr-1.5 inline h-4 w-4 text-blue-300" />Selected route alerts</h2><p className="text-[11px] text-slate-400">{route.origin?.name || "Origin"} → {route.destination?.name || "Destination"} · corridor matched from current route geometry</p></div>
                 <span className="text-xs text-slate-400">{matchedAlerts.length} matched</span>
               </div>
-              {routeQuery.isLoading ? <LoadingState message="Matching alerts to the selected route..." skeletonLines={2} /> : routeQuery.error ? <ErrorState title="Route Alerts Unavailable" error={routeQuery.error} onRetry={() => routeQuery.refetch()} /> : matchedAlerts.length === 0 ? <EmptyState title="No Active Alerts Along This Route" description="No active traffic alerts fall within the configured route corridor." /> : matchedAlerts.map((item) => <AlertCard key={item.alert.id} alert={item.alert} routeSpecific distanceAlongRoute={item.distance_along_route_meters} busy={alertAction.isPending} onAction={(alertId, action) => alertAction.mutate({ alertId, action })} />)}
+              {routeQuery.isLoading ? <LoadingState message="Matching alerts to the selected route..." skeletonLines={2} /> : routeQuery.error ? <ErrorState title="Route Alerts Unavailable" error={routeQuery.error} onRetry={() => routeQuery.refetch()} /> : routeQuery.data?.status !== "AVAILABLE" ? <EmptyState title="Route incident data unavailable" description={routeQuery.data?.error || "Current incidents could not be verified."} /> : matchedAlerts.length === 0 ? <EmptyState title={routeQuery.data?.incident_count === 0 ? "No currently reported traffic incidents affecting this route." : "No enabled alert rules match the reported route incidents."} description="No active alert rules match the latest route observations." /> : matchedAlerts.map((item) => <AlertCard key={item.alert.id} alert={item.alert} routeSpecific distanceAlongRoute={item.distance_along_route_meters} distanceFromRoute={item.distance_to_route_meters} busy={alertAction.isPending} onAction={(alertId, action) => alertAction.mutate({ alertId, action })} />)}
             </section>
           )}
 
-          <section className="space-y-3">
+          {!hasRoute && <section className="space-y-3">
             <div className="flex items-center justify-between"><h2 className="text-sm font-semibold text-white">{hasRoute ? "Citywide alerts" : "Active and acknowledged alerts"}</h2><span className="text-xs text-slate-400">{generalAlerts.length} alerts</span></div>
             {activeQuery.isLoading ? <LoadingState message="Loading active alerts..." skeletonLines={3} /> : activeQuery.error ? <ErrorState title="Alerts Unavailable" error={activeQuery.error} onRetry={() => activeQuery.refetch()} /> : generalAlerts.length === 0 ? <EmptyState title="No Active Traffic Alerts" description="The enabled rules have not matched a current traffic observation." /> : generalAlerts.map((alert) => <AlertCard key={alert.id} alert={alert} busy={alertAction.isPending} onAction={(alertId, action) => alertAction.mutate({ alertId, action })} />)}
-          </section>
+          </section>}
         </div>
       )}
 

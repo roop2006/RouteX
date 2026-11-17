@@ -5,7 +5,7 @@ import type {
   AlertRule,
   AlertSeverity,
   AlertStatistics,
-  RouteTrafficAlert,
+  RouteAlertSnapshot,
   TrafficAlert,
 } from "../types/alerts";
 
@@ -32,11 +32,11 @@ export async function getRouteAlerts(
   routeId: string,
   geometry: Record<string, unknown>,
   signal?: AbortSignal,
-): Promise<RouteTrafficAlert[]> {
-  const response = await apiClient.post<RouteTrafficAlert[]>("/alerts/route", {
+): Promise<RouteAlertSnapshot> {
+  const response = await apiClient.post<RouteAlertSnapshot>("/alerts/route/snapshot", {
     route_id: routeId,
     geometry,
-  }, { signal, timeout: 10000 });
+  }, { signal, timeout: 12000 });
   return response.data;
 }
 

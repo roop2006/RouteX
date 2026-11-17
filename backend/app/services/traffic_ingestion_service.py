@@ -190,79 +190,9 @@ class TrafficIngestionService:
 
 
 def seed_corridor_historical_observations(db: Session) -> dict[str, int]:
+    """Compatibility entry point: only explicitly imported observations are valid.
+
+    Older releases inserted fixed profiles here. Existing records are preserved
+    but excluded from operational route analytics by their provenance.
     """
-    Populates historical traffic observation telemetry for all registered Chennai arterial hubs
-    (INT_002 to INT_006) to ensure route corridors across Chennai have authentic historical observations
-    in PostGIS, enabling corridor intelligence and AI model feature construction.
-    """
-    # Check if telemetry already exists for other intersections
-    existing_counts = dict(
-        db.execute(
-            text("SELECT intersection_id, count(*) FROM traffic_stream_events GROUP BY intersection_id")
-        ).fetchall()
-    )
-
-    hubs = [
-        {"id": "INT_002", "lat": 13.0824, "lng": 80.2755, "name": "Chennai Central Junction"},
-        {"id": "INT_003", "lat": 13.0782, "lng": 80.2608, "name": "Egmore Station Junction"},
-        {"id": "INT_004", "lat": 13.0850, "lng": 80.2100, "name": "Anna Nagar Roundtana"},
-        {"id": "INT_005", "lat": 13.0405, "lng": 80.2337, "name": "T. Nagar Panagal Park"},
-        {"id": "INT_006", "lat": 13.0067, "lng": 80.2026, "name": "Guindy Kathipara Junction"},
-    ]
-
-    total_added = 0
-    # Baseline temporal profile (morning peak, noon, evening peak, night)
-    hourly_profiles = [
-        {"hour": 8, "minute": 30, "vehicles": 35, "speed": 18.0, "density": 0.58, "cong": "MEDIUM"},
-        {"hour": 9, "minute": 15, "vehicles": 48, "speed": 12.0, "density": 0.80, "cong": "HIGH"},
-        {"hour": 12, "minute": 0, "vehicles": 22, "speed": 34.0, "density": 0.36, "cong": "LOW"},
-        {"hour": 14, "minute": 30, "vehicles": 26, "speed": 32.0, "density": 0.43, "cong": "LOW"},
-        {"hour": 17, "minute": 45, "vehicles": 44, "speed": 14.5, "density": 0.73, "cong": "MEDIUM"},
-        {"hour": 18, "minute": 30, "vehicles": 52, "speed": 11.0, "density": 0.86, "cong": "HIGH"},
-        {"hour": 21, "minute": 0, "vehicles": 18, "speed": 40.0, "density": 0.30, "cong": "LOW"},
-    ]
-
-    base_date = datetime(2026, 10, 20)
-    for hub in hubs:
-        hub_id = hub["id"]
-        # If this hub has fewer than 20 observations, seed verified historical observations
-        if existing_counts.get(hub_id, 0) < 20:
-            for day_offset in range(5):  # 5 recent days of telemetry
-                day_date = datetime(2026, 10, 20 + day_offset)
-                for profile in hourly_profiles:
-                    event_time = datetime(
-                        day_date.year,
-                        day_date.month,
-                        day_date.day,
-                        profile["hour"],
-                        profile["minute"],
-                    )
-                    point_wkt = f"POINT({hub['lng']} {hub['lat']})"
-                    metadata = {
-                        "source": "historical_chennai_arterial_benchmark",
-                        "corridor_hub": hub["name"],
-                        "provenance": "chennai_urban_traffic_telemetry_v1",
-                    }
-                    db_event = TrafficStreamEvent(
-                        total_vehicles=profile["vehicles"],
-                        vehicle_types={"car": int(profile["vehicles"] * 0.7), "truck": int(profile["vehicles"] * 0.1), "motorcycle": int(profile["vehicles"] * 0.2)},
-                        lane_counts={"lane_1": int(profile["vehicles"] / 3), "lane_2": int(profile["vehicles"] / 3), "lane_3": int(profile["vehicles"] / 3)},
-                        direction_counts={"inbound": int(profile["vehicles"] * 0.55), "outbound": int(profile["vehicles"] * 0.45)},
-                        average_speed=profile["speed"],
-                        density=profile["density"],
-                        congestion_level=profile["cong"],
-                        events=[metadata],
-                        intersection_id=hub_id,
-                        latitude=hub["lat"],
-                        longitude=hub["lng"],
-                        location=WKTElement(point_wkt, srid=POSTGIS_SRID),
-                        timestamp=event_time,
-                    )
-                    db.add(db_event)
-                    total_added += 1
-
-    if total_added > 0:
-        db.commit()
-        logger.info(f"Seeded +{total_added} corridor historical observations across Chennai hubs.")
-
-    return {"observations_added": total_added}
+    return {"observations_added": 0}

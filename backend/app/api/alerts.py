@@ -16,6 +16,7 @@ from backend.app.schemas.alerts import (
     AlertRuleUpdate,
     AlertStatistics,
     RouteAlertSearch,
+    RouteAlertSnapshot,
     RouteTrafficAlertRead,
     TrafficAlertRead,
 )
@@ -26,6 +27,8 @@ from backend.app.services.alert_service import (
     process_alert_event,
     route_alert_matches,
     update_alert_status,
+    sync_incident_alerts,
+    match_route_incidents,
 )
 
 router = APIRouter(tags=["Traffic Alerts"])
@@ -154,10 +157,41 @@ def alerts_for_route(request: RouteAlertSearch, db: Session = Depends(get_db)):
             continue
         results.append({
             "alert": alert,
+            "route_id": request.route_id,
+            "marker_latitude": row.marker_latitude,
+            "marker_longitude": row.marker_longitude,
             "distance_to_route_meters": float(row.distance_to_route_meters),
             "distance_along_route_meters": float(row.distance_along_route_meters),
         })
     return results
+
+
+@router.post("/alerts/route/snapshot", response_model=RouteAlertSnapshot)
+def route_incident_snapshot(request: RouteAlertSearch, db: Session = Depends(get_db)):
+    from backend.app.services.tomtom_traffic_service import tomtom_traffic_service
+    coords = request.geometry["coordinates"]
+    # Conservative geographic envelope; exact metre matching is done in PostGIS.
+    lat_pad = request.corridor_meters / 110000
+    lng_pad = lat_pad / max(0.01, math.cos(math.radians(max(abs(p[1]) for p in coords))))
+    bbox = (max(-180, min(p[0] for p in coords) - lng_pad), max(-90, min(p[1] for p in coords) - lat_pad),
+            min(180, max(p[0] for p in coords) + lng_pad), min(90, max(p[1] for p in coords) + lat_pad))
+    snapshot = tomtom_traffic_service.get_incident_snapshot(*bbox)
+    try:
+        if snapshot["status"] == "AVAILABLE":
+            sync_incident_alerts(db, snapshot["incidents"], bbox=bbox)
+        incidents = match_route_incidents(db, request.geometry, snapshot["incidents"], request.corridor_meters)
+        alerts = alerts_for_route(request, db)
+        if snapshot["status"] == "AVAILABLE":
+            current_ids = {incident["id"] for incident in incidents}
+            alerts = [match for match in alerts if match["alert"].source != "tomtom_traffic_incidents"
+                      or match["alert"].source_event_id in current_ids]
+    except Exception:
+        db.rollback()
+        import logging
+        logging.getLogger(__name__).exception("Route incident persistence/matching failed")
+        raise HTTPException(status_code=503, detail="Route incident persistence or spatial matching is unavailable")
+    return {**snapshot, "route_id": request.route_id, "incidents": incidents,
+            "incident_count": len(incidents), "alerts": alerts}
 
 
 @router.post("/alerts/{alert_id}/acknowledge", response_model=TrafficAlertRead)

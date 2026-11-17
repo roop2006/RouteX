@@ -112,6 +112,7 @@ def test_incident_endpoint_uses_existing_tomtom_product_and_parses_source():
 
 
 def test_redis_snapshot_ttl_freshness_and_alert_keys(monkeypatch):
+    monkeypatch.setattr(TrafficRedis, "_unavailable_until", 0)
     class FakeRedisClient:
         def __init__(self, **_kwargs):
             self.values = {}
