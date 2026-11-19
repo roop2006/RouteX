@@ -16,9 +16,9 @@ Uploads are sanitized, extension-checked, limited to 100 MB and decoded before p
 
 Use `npm audit` and `pip-audit` as documented in CI. Advisory databases change; record scan dates and fix known findings before release. Check application and base-image updates regularly. Base-image tags currently select named runtime release families; record digests from a verified build when reproducing an exact deployment. No image vulnerability result should be inferred from a package audit alone.
 
-### Known development-only advisory (2026-11-18)
+### Advisory review (2026-11-19)
 
-The full npm audit reports [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf), a high-severity repeated-extglob ReDoS in picomatch through 4.0.7. GitHub's advisory metadata reports no patched release, and the npm registry's latest version is 4.0.7. It is used by the Vite/ESLint build toolchain, not shipped in nginx's production static runtime; `npm audit --omit=dev` reports zero advisories. Build only trusted project patterns and keep development servers private. The automated audit permits only this exact development-only advisory until 2026-12-18, still reports it, and fails on new high/critical advisories or any high/critical production finding. Do not present the full npm audit as clean. Replace the exception when upstream publishes a fix; do not downgrade the working Vite architecture merely to change the audit graph.
+The earlier full npm audit reported [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) in development dependency picomatch. GitHub withdrew it at 2026-11-18 15:38:56 UTC, confirmed through the public advisory metadata. Fresh full and production-only npm audits on 2026-11-19 both report zero findings. The temporary exception was removed before publication; CI fails on high/critical advisories across the full dependency tree with no exceptions. These are scan-time results, not a guarantee against future advisories.
 
 Model files use Python serialization and can execute code when loaded. Only use the trusted repository artifacts and the pinned upstream YOLO download. SHA-256 verification is in `deploy/assets.json`; never bypass it to load a model from an unknown source. Phase 10 does not train or modify the existing models. Compressed external model bytes expand to the exact original artifact hash.
 

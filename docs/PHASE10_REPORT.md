@@ -1,6 +1,6 @@
 # Phase 10 verification and handover
 
-Verification date: 2026-11-18. Target: Linux amd64 containers on Windows Docker Desktop. This report distinguishes real integrations from deterministic test fixtures. No cloud deployment, repository visibility change, model retraining, or new project license was introduced.
+Verification dates: 2026-11-18 and 2026-11-19. Target: Linux amd64 containers on Windows Docker Desktop. This report distinguishes real integrations from deterministic test fixtures. No cloud deployment, repository visibility change, model retraining, or new project license was introduced.
 
 ## 1. Architecture
 
@@ -27,7 +27,7 @@ Create `.env.docker` from `.env.example` first and set a unique database passwor
 | Docker images, initialization, internal networking | Verified using real services | Linux CPU images built; fresh volumes initialized and readiness passed. No host Python/Node/database needed by runtime. |
 | PostgreSQL/PostGIS and geography | Verified using real services | Spatial API queries; five reference roads and six intersections; additive initialization and restart checks. References are demonstration geography, not live observations. |
 | Kafka consumer, Redis and alerts | Verified using real services | Existing YOLO pipeline measured 15 vehicles from a local real video sample; producer acknowledgment, running consumer, DB event identity, Redis snapshot and API retrieval verified. Repeated successfully after restart. |
-| TomTom Flow and Incidents | Verified using real services | Dedicated provider endpoint ACTIVE; final smoke retrieved 154 incidents. Counts are time-dependent, not guaranteed. Missing-key configuration explicitly reported `not_configured`. |
+| TomTom Flow and Incidents | Verified using real services | Dedicated provider endpoint ACTIVE; 2026-11-19 clean-clone smoke retrieved 159 incidents. Counts are time-dependent, not guaranteed. Missing-key configuration explicitly reported `not_configured`. |
 | OSRM | Verified using real services | Real external driving routes and integration status `available`; browser route changed from Chennai Central to Egmore and alternatives recalculated. Public endpoint has no availability guarantee. |
 | Uploaded video / CPU YOLO | Verified using real services | Real MP4 uploaded and job completed. Decoding, detection and tracking ran on CPU; no GPU requirement. |
 | ML models, predictions, history/evaluation | Verified using real services | Original artifact hashes preserved; production models loaded; prediction/history/evaluation APIs exercised. Numerical test inputs are fixtures, not observed traffic. |
@@ -44,7 +44,7 @@ Repository: [roop2006/RouteX](https://github.com/roop2006/RouteX), existing bran
 
 Phase 10 changes include Docker/CI/deployment files, dependency manifests, essential existing model artifacts, previously ignored `ml/data` source modules, architecture/operations/security documentation and genuine screenshots. Runtime changes are limited to deployment configuration, readiness/CORS/error sanitization, graceful consumer shutdown, producer acknowledgment, proxy routing and frontend loading/text fixes. The original model bytes are unchanged; the large external model is distributed compressed with its original expanded checksum.
 
-Publication status: final source commit, fresh-clone verification and GitHub push are pending at the time of this report draft. This paragraph will be updated with observed results before handover.
+Phase 10 source commit: **`aef6741` — `Complete Phase 10 - Dockerization and System Verification`**. A local `git clone --no-hardlinks` of that commit built and ran with fresh volumes. The only subsequent code change removes the withdrawn advisory exception from the CI audit; it does not change application behavior. GitHub publication and hosted CI results are recorded after execution below.
 
 ## 5. CI
 
@@ -66,19 +66,19 @@ Screenshots were captured from the production Docker frontend, not generated moc
 | Final container backend suite, 2026-11-18 | **112 passed, 1 skipped**, 43 warnings, 13.89 seconds. Skip is the opt-in real-video test; it is independently covered by real streaming acceptance. |
 | Frontend lint / production build | Passed. Lazy page loading reduced the main bundle from approximately 1.12 MB to 288 kB; no >500 kB chunk warning. No redesign. |
 | Compose configuration / runtime builds | Passed; backend CPU runtime approximately 3.54 GB, nginx frontend approximately 83 MB (Docker image-reported bytes, not compressed download sizes). |
-| Isolated installation | Source-only directory excluding local env, virtualenv, node_modules, videos and raw datasets; fresh named volumes; required models loaded/downloaded through documented preparation. Actual final-commit clone check pending below. |
-| Persistence / restart | DB, Redis, backend and consumer restarted; readiness recovered. Counts unchanged across restart: roads 5, intersections 6, prediction history 10, stream events 21, alerts 183. Real provider/streaming checks rerun. |
+| Isolated installation | Source-only directory excluding local env, virtualenv, node_modules, videos and raw datasets; fresh named volumes; required models loaded/downloaded through documented preparation. A separate local clone of committed source `aef6741` also built all three images, initialized fresh volumes, opened the dashboard, passed 112 tests (1 opt-in skip; 10.56 seconds), and passed real provider, uploaded-video and streaming checks on 2026-11-19. No uncommitted application files were copied into it. The supplied local video was acceptance-test input only; it is not a startup dependency. |
+| Persistence / restart | DB, Redis, backend and consumer restarted; readiness recovered. Counts unchanged across restart: roads 5, intersections 6, prediction history 10, stream events 21, alerts 183. Real provider/streaming checks rerun. The clean-clone restart independently preserved roads 5, intersections 6, predictions 5, stream events 14 and alerts 171, with readiness and provider checks passing after restart. |
 | Production routing | `/api/health/ready`, redirected `/api/roads`, `/api/intersections`, nested SPA routes returned 200. nginx retains `/api` and public host/port through FastAPI redirects. |
 | Python advisory audit | **91 packages audited, zero known vulnerabilities** after targeted updates. This applies to the verified Docker environment, not an assertion that the pre-existing native virtualenv was upgraded. |
 | npm production audit | **Zero advisories** (`--omit=dev`). |
-| npm full toolchain audit | **Known high-severity picomatch advisory, no patched upstream release on 2026-11-18**. Eleven inherited package findings refer to this advisory. Exact, development-only CI exception expires 2026-12-18; new high/critical findings fail. Full audit is not clean. |
-| Secrets and repository size | Configured secret compared against changed files and reachable history without printing values; no match found. Historical `.env` was empty. Final tracked-file guard must pass before push. |
+| npm full toolchain audit | **Zero findings on 2026-11-19**. The previously reported picomatch advisory was withdrawn by GitHub at 2026-11-18 15:38:56 UTC. The temporary CI exception was removed; all high/critical findings fail. |
+| Secrets and repository size | Configured secret compared against changed files and reachable history without printing values; no match found. Historical `.env` was empty. Final tracked-file guard passed with zero findings. Configured-secret comparison covered 235 tracked paths and 1,938 historical blobs, with no matches. |
 | Base-image OS vulnerability scan | Not performed; package audits do not establish image OS security. |
 
 ## 8. Remaining operator actions and limits
 
 - Supply your own TomTom credentials and ensure required products/quotas. External routing, maps and model download require network access.
-- Review the [picomatch exception](SECURITY_AND_CREDITS.md#known-development-only-advisory-2026-11-18) when upstream publishes a fix and no later than 2026-12-18.
+- Repeat dependency and base-image security reviews regularly; scan results are time-dependent.
 - Keep deployment on loopback. Add authentication, authorization, TLS, quotas, retention and durable jobs before broader exposure.
 - Job metadata and provider caches are in memory. Restart interrupts active video jobs; stored uploads persist but old job lookup does not.
 - Geographic references and existing ML models have limited domain/calibration. TomTom has no measured vehicle counts; insufficient-input states are intentional.

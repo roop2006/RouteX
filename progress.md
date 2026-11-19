@@ -102,3 +102,5 @@ Updated: 2026-11-18. This entry supersedes older environment-blocker and incompl
 - Python package audit: 91 packages, zero advisories. npm production audit: zero. Full development audit retains one unfixed picomatch advisory with an exact exception expiring 2026-12-18.
 - Added README/architecture/operations/security documentation, real screenshots and GitHub Actions. Final commit/clone/push/hosted CI status is recorded in [the Phase 10 report](docs/PHASE10_REPORT.md).
 - No Phase 11, cloud service, new license, visibility change, destructive database action or history rewrite. The native environment and existing data were preserved.
+
+Phase 10 update, 2026-11-19: source committed as `aef6741`; fresh clone created and Docker images built. GitHub withdrew the picomatch advisory; refreshed full and production npm audits report zero findings and the temporary CI exception was removed. Final publication evidence follows in the Phase 10 report.

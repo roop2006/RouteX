@@ -1,15 +1,8 @@
-"""Fail on high/critical advisories except one time-limited dev-only finding.
-
-The production dependency audit has no exceptions. See SECURITY_AND_CREDITS.md.
-"""
-from datetime import date
+"""Fail on high/critical npm advisories, including development dependencies."""
 import json
 import shutil
 import subprocess
 import sys
-
-KNOWN_DEV_ADVISORY = 'https://github.com/advisories/GHSA-fc5q-39xc-vjpf'
-REVIEW_BY = date(2026, 12, 18)
 
 
 def audit(*extra):
@@ -31,23 +24,9 @@ def main():
     if counts['high'] or counts['critical']:
         return 1
     full = audit()
-    unexpected = []
-    known = False
-    for name, package in full.get('vulnerabilities', {}).items():
-        for advisory in package.get('via', []):
-            if not isinstance(advisory, dict) or advisory.get('severity') not in ('high', 'critical'):
-                continue
-            if name == 'picomatch' and advisory.get('url') == KNOWN_DEV_ADVISORY and date.today() <= REVIEW_BY:
-                known = True
-            else:
-                unexpected.append((name, advisory.get('url')))
-    if known:
-        print(f'KNOWN DEV-ONLY EXCEPTION: {KNOWN_DEV_ADVISORY}; no patched release; review by {REVIEW_BY}.')
-    for name, url in unexpected:
-        print(f'BLOCKED: {name}: {url}')
-    if not full.get('vulnerabilities'):
-        print('Full dependency audit: no known vulnerabilities.')
-    return bool(unexpected)
+    counts = full['metadata']['vulnerabilities']
+    print('Full dependency advisories:', counts)
+    return bool(counts['high'] or counts['critical'])
 
 
 if __name__ == '__main__':

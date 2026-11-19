@@ -152,7 +152,7 @@ npm --prefix frontend audit --audit-level=high
 
 These are native frontend-development commands; Docker builds run the production build without requiring host Node. Backend tests must target a disposable database. The [Docker test procedure](docs/DOCKER.md#isolated-automated-tests) runs the existing suite in containers with real PostGIS and explicitly mocked external provider transports. It includes the real-provider and real-video acceptance commands. Never run fixture-writing integration tests against production records.
 
-The full npm audit currently reports one unfixed development-only picomatch advisory (plus inherited toolchain findings). Production dependencies audit clean. CI uses `python deploy/audit_frontend.py` with a narrow, expiring exception; see the [security finding](docs/SECURITY_AND_CREDITS.md#known-development-only-advisory-2026-11-18).
+Full and production-only npm audits on 2026-11-19 report zero findings. CI uses `python deploy/audit_frontend.py` and fails on high/critical advisories with no exceptions; see [the security review](docs/SECURITY_AND_CREDITS.md#advisory-review-2026-11-19).
 
 CI validates frontend lint/build/dependencies, repository hygiene, Compose configuration, Docker builds, backend regressions, Python dependency advisories and production proxy routes. No frontend unit-test framework currently exists. Actual execution results and limitations are recorded in [the Phase 10 verification report](docs/PHASE10_REPORT.md); a workflow file alone is not evidence of a passed GitHub run.
 
