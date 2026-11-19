@@ -54,7 +54,7 @@ def analyze_route(
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"Route analysis encountered an internal error: {str(exc)}",
+            detail="Route analysis is unavailable due to an internal error.",
         )
 
 

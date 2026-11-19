@@ -2,6 +2,7 @@
 import json
 import logging
 import time
+import signal
 from datetime import datetime, timezone
 
 from kafka import KafkaConsumer, TopicPartition
@@ -99,6 +100,11 @@ class TrafficKafkaConsumer:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    # SystemExit unwinds the loop and closes the consumer on Docker SIGTERM.
+    def stop_consumer(_signum, _frame):
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, stop_consumer)
     consumer = TrafficKafkaConsumer()
     try:
         consumer.consume()

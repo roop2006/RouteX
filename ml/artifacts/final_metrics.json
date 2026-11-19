@@ -1,0 +1,14 @@
+{
+    "classification": {
+        "accuracy": 1.0,
+        "precision_macro": 1.0,
+        "recall_macro": 1.0,
+        "f1_macro": 1.0
+    },
+    "forecasting": {
+        "mae": 1.7181351102158944e-14,
+        "rmse": 2.3694657444414165e-14,
+        "r2": 1.0
+    },
+    "test_records": 299
+}

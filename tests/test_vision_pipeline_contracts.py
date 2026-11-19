@@ -74,5 +74,6 @@ def test_kafka_payload_compatibility():
     assert "latitude" in deserialized
     assert "longitude" in deserialized
     assert TRAFFIC_TOPIC == "routex-traffic-events"
-    assert KAFKA_BOOTSTRAP_SERVERS == "localhost:9092"
+    import os
+    assert KAFKA_BOOTSTRAP_SERVERS == os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     assert KAFKA_GROUP_ID == "routex-postgres-consumer"

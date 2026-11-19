@@ -89,3 +89,16 @@ Updated: 2026-11-10
 - Live TomTom Flow, TomTom incidents, and external OSRM cannot be confirmed from this host until outbound connectivity is restored. Local PostGIS routes and application fallback behavior remain available for matching registered roads.
 - The 93-test suite needs a complete rerun in an environment where route integration requests terminate within their configured bounds; this run ended during the live corridor test and must not be presented as a pass.
 - Phase 10 deployment work has not started.
+
+
+## Phase 10 — reproducible Docker packaging and final verification
+
+Updated: 2026-11-18. This entry supersedes older environment-blocker and incomplete-suite statements above; those entries are retained as historical evidence.
+
+- Preserved and verified all Phase 9 changes in commit `1ea0387` (`Complete Phase 9 - Alerts and Traffic Reliability`): 109 tests passed, one skipped, plus the real streaming opt-in test passed.
+- Added CPU backend/test images, production nginx frontend, complete Compose services, additive initialization, persistent volumes, safe env template, checksum-verified model preparation and isolated test tooling. Recovered required `ml/data` Python source previously hidden by an overly broad ignore rule.
+- Container regression: 112 passed, one opt-in test skipped. Real TomTom Flow/Incidents and OSRM, uploaded video completion, YOLO → Kafka consumer → PostgreSQL → Redis → API, production browser navigation and route changes verified. Restart preserved table counts.
+- Frontend lint/build passed; lazy page loading removed the large-chunk warning. Fixed production API redirects and garbled text labels.
+- Python package audit: 91 packages, zero advisories. npm production audit: zero. Full development audit retains one unfixed picomatch advisory with an exact exception expiring 2026-12-18.
+- Added README/architecture/operations/security documentation, real screenshots and GitHub Actions. Final commit/clone/push/hosted CI status is recorded in [the Phase 10 report](docs/PHASE10_REPORT.md).
+- No Phase 11, cloud service, new license, visibility change, destructive database action or history rewrite. The native environment and existing data were preserved.

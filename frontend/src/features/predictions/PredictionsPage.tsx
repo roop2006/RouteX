@@ -129,10 +129,10 @@ export const PredictionsPage: React.FC = () => {
               <Sparkles className="w-4 h-4 text-purple-300" />
               <h3 className="text-base font-semibold text-white">Selected Route Prediction</h3>
             </div>
-            <span className="text-[11px] text-slate-400">{routeContext.selectedRoute.distance_km} km â€¢ calculated {formatTimeOnly(routeContext.calculatedAt || "")}</span>
+            <span className="text-[11px] text-slate-400">{routeContext.selectedRoute.distance_km} km • calculated {formatTimeOnly(routeContext.calculatedAt || "")}</span>
           </div>
           <div className="text-xs text-slate-300">
-            {routeContext.origin?.name || "Origin"} â†’ {routeContext.destination?.name || "Destination"}
+            {routeContext.origin?.name || "Origin"} → {routeContext.destination?.name || "Destination"}
           </div>
           {routePrediction.status === "AVAILABLE" ? (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">

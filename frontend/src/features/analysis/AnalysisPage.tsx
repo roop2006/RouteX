@@ -127,19 +127,19 @@ export const AnalysisPage: React.FC = () => {
               <div className="text-xs font-semibold uppercase tracking-wider text-blue-300">Selected route traffic</div>
               <div className="mt-1 text-sm text-white">
                 {routeContext.origin?.name || `${routeContext.origin?.lat.toFixed(4)}, ${routeContext.origin?.lng.toFixed(4)}`}
-                <span className="mx-2 text-slate-500">â†’</span>
+                <span className="mx-2 text-slate-500">→</span>
                 {routeContext.destination?.name || `${routeContext.destination?.lat.toFixed(4)}, ${routeContext.destination?.lng.toFixed(4)}`}
                 <span className="ml-2 text-slate-400">({routeContext.selectedRoute.distance_km} km)</span>
               </div>
             </div>
             <span className="text-xs text-slate-300">
-              {routeCorridor.observation_freshness || "UNAVAILABLE"} â€¢ {routeCorridor.telemetry_source || "No observation source"}
+              {routeCorridor.observation_freshness || "UNAVAILABLE"} • {routeCorridor.telemetry_source || "No observation source"}
             </span>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div><span className="text-slate-400 block">Congestion</span><strong className="text-white">{routeCorridor.observed_congestion || "UNAVAILABLE"}</strong></div>
-            <div><span className="text-slate-400 block">Observed / reference speed</span><strong className="text-white">{routeCorridor.observed_average_speed ?? "â€”"} / {routeCorridor.observed_free_flow_speed ?? routeCorridor.speed_limit_reference ?? "â€”"} km/h</strong><span className="block text-[10px] text-slate-500">Reference uses observed free-flow speed when available, otherwise registered speed limit.</span></div>
-            <div><span className="text-slate-400 block">Average volume / density</span><strong className="text-white">{routeCorridor.observed_total_vehicles ?? "â€”"} vehicles / {routeCorridor.observed_density ?? "â€”"}</strong></div>
+            <div><span className="text-slate-400 block">Observed / reference speed</span><strong className="text-white">{routeCorridor.observed_average_speed ?? "—"} / {routeCorridor.observed_free_flow_speed ?? routeCorridor.speed_limit_reference ?? "—"} km/h</strong><span className="block text-[10px] text-slate-500">Reference uses observed free-flow speed when available, otherwise registered speed limit.</span></div>
+            <div><span className="text-slate-400 block">Average volume / density</span><strong className="text-white">{routeCorridor.observed_total_vehicles ?? "—"} vehicles / {routeCorridor.observed_density ?? "—"}</strong></div>
             <div><span className="text-slate-400 block">Delay / matched observations</span><strong className="text-white">{routeCorridor.incident_delay_seconds ? `${Math.round(routeCorridor.incident_delay_seconds / 60)} min` : "No reported incident delay"} / {routeCorridor.telemetry_sample_count}</strong></div>
           </div>
           {routeCorridor.latest_observation_at && (
@@ -148,8 +148,8 @@ export const AnalysisPage: React.FC = () => {
           {routeContext.selectedRoute.ai_prediction && (
             <div className="border-t border-blue-900/60 pt-3 text-xs text-slate-300">
               Route AI: <strong className="text-white">{routeContext.selectedRoute.ai_prediction.status}</strong>
-              {routeContext.selectedRoute.ai_prediction.predicted_congestion && ` â€¢ ${routeContext.selectedRoute.ai_prediction.predicted_congestion}`}
-              {routeContext.selectedRoute.ai_prediction.explanation && ` â€¢ ${routeContext.selectedRoute.ai_prediction.explanation}`}
+              {routeContext.selectedRoute.ai_prediction.predicted_congestion && ` • ${routeContext.selectedRoute.ai_prediction.predicted_congestion}`}
+              {routeContext.selectedRoute.ai_prediction.explanation && ` • ${routeContext.selectedRoute.ai_prediction.explanation}`}
             </div>
           )}
         </section>

@@ -4,6 +4,7 @@ env/
 
 .env
 .env.*
+!.env.example
 
 __pycache__/
 *.py[cod]
@@ -16,10 +17,17 @@ Thumbs.db
 
 
 # Local datasets and generated data
-data/
+/data/
 
 # Local ML artifacts and downloaded model weights
-ml/artifacts/
+ml/artifacts/*
+!ml/artifacts/*.json
+!ml/artifacts/congestion_model.joblib
+!ml/artifacts/traffic_forecast_model.joblib
+!ml/artifacts/external/
+ml/artifacts/external/*
+!ml/artifacts/external/*.json
+!ml/artifacts/external/traffic_volume_model.joblib.gz
 *.pt
 *.pth
 *.onnx
@@ -27,6 +35,15 @@ ml/artifacts/
 # Database backups
 *.dump
 *.sql
+!deploy/*.sql
+
+.pytest-temp/
+.pytest_cache/
+.phase10-verify/
+*.log
+*.egg-info/
+osrm-data/
+backups/
 
 # Temporary Git inspection reports
 git-status-check.txt

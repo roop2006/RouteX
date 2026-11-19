@@ -25,6 +25,7 @@ from backend.app.schemas.user_analysis import (
     RouteTrafficObservation,
 )
 from backend.app.services.tomtom_traffic_service import tomtom_traffic_service
+from backend.app.core.config import settings
 from ml.prediction.predictor import TrafficPredictor
 
 logger = logging.getLogger("routex.route_analysis")
@@ -133,7 +134,7 @@ def fetch_osrm_route(
     alt_param = "true" if include_alternatives else "false"
     OSRM_CONNECTIVITY["checked_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
     url = (
-        f"https://router.project-osrm.org/route/v1/driving/"
+        f"{settings.osrm_base_url.rstrip('/')}/route/v1/driving/"
         f"{origin_lng},{origin_lat};{dest_lng},{dest_lat}"
         f"?overview=full&geometries=geojson&alternatives={alt_param}"
     )
@@ -294,7 +295,7 @@ def fetch_osrm_via_route(
 ) -> dict[str, Any]:
     """Queries real road route geometry via an intermediate road/junction waypoint."""
     url = (
-        f"https://router.project-osrm.org/route/v1/driving/"
+        f"{settings.osrm_base_url.rstrip('/')}/route/v1/driving/"
         f"{origin_lng},{origin_lat};{via_lng},{via_lat};{dest_lng},{dest_lat}"
         f"?overview=full&geometries=geojson"
     )

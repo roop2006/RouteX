@@ -1,0 +1,59 @@
+name: RouteX CI
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm --prefix frontend ci
+      - run: npm --prefix frontend run lint
+      - run: npm --prefix frontend run build
+      - run: python deploy/audit_frontend.py
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      POSTGRES_PASSWORD: ci-disposable-database-only
+      TOMTOM_API_KEY: ''
+      COMPOSE_PROJECT_NAME: routex-ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.12'
+      - run: python deploy/check_repository.py
+      - run: docker compose -f docker-compose.yml -f compose.test.yml config --quiet
+      - name: Build runtime and test images (installs pinned Python dependencies)
+        run: docker compose -f docker-compose.yml -f compose.test.yml build backend frontend tests
+      - run: docker compose up -d --wait --wait-timeout 180
+      - name: Backend regression tests (real PostGIS; mocked external providers)
+        run: docker compose -f docker-compose.yml -f compose.test.yml run --rm tests
+      - name: Python dependency audit
+        run: docker compose -f docker-compose.yml -f compose.test.yml run --rm --no-deps tests python -m pip_audit
+      - name: Production proxy and nested route
+        run: |
+          curl --fail http://localhost:5173/api/health/ready
+          curl --fail --location http://localhost:5173/api/roads
+          curl --fail --location http://localhost:5173/api/intersections
+          curl --fail http://localhost:5173/alerts
+      - name: Diagnostics
+        if: failure()
+        run: docker compose logs --tail=100
+      - name: Clean up disposable CI stack
+        if: always()
+        run: docker compose -f docker-compose.yml -f compose.test.yml down -v

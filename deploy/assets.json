@@ -1,0 +1,6 @@
+{
+  "ml/artifacts/congestion_model.joblib": "9ab951145cac1fca1c9341dc8b089b3fdd1dbc7ff6a3e4b4e881da48616b077e",
+  "ml/artifacts/traffic_forecast_model.joblib": "499d398aec3f4d4fce2dee1923c62d55eb7ffb536312dddff35570553fd1c1eb",
+  "ml/artifacts/external/traffic_volume_model.joblib": "2a370b0eac00fa35216cf5cb65436b946ecbc91655d9c37ce7a7fb1c97a3d9c2",
+  "yolo11n.pt": "0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1"
+}

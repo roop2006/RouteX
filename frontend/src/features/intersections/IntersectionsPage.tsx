@@ -77,7 +77,7 @@ export const IntersectionsPage: React.FC = () => {
 
       {routeMode && routeContext.selectedRoute && (
         <div className="rounded-lg border border-indigo-500/30 bg-indigo-950/20 p-3 text-xs text-slate-300">
-          Intersections within the configured route corridor for {routeContext.origin?.name || "origin"} â†’ {routeContext.destination?.name || "destination"}.
+          Intersections within the configured route corridor for {routeContext.origin?.name || "origin"} → {routeContext.destination?.name || "destination"}.
           <span className="ml-2 text-slate-400">Only registered PostGIS nodes are shown.</span>
         </div>
       )}
@@ -127,7 +127,7 @@ export const IntersectionsPage: React.FC = () => {
                     <td className="py-3 px-4 font-mono text-slate-200">{item.latitude.toFixed(4)}</td>
                     <td className="py-3 px-4 font-mono text-slate-200">{item.longitude.toFixed(4)}</td>
                     {routeMode && <td className="py-3 px-4 text-slate-300">{Math.round((item as CorridorIntersectionMatch).distance_to_route_meters || 0)} m / {((item as CorridorIntersectionMatch).associated_road_ids || []).join(", ") || "No associated road"}</td>}
-                    {routeMode && <td className="py-3 px-4 text-slate-300">{(item as CorridorIntersectionMatch).observed_average_speed == null ? "No observation" : `${(item as CorridorIntersectionMatch).observed_average_speed} km/h â€¢ ${(item as CorridorIntersectionMatch).observed_congestion || "Unknown"} â€¢ ${(item as CorridorIntersectionMatch).observation_count || 0} records`}</td>}
+                    {routeMode && <td className="py-3 px-4 text-slate-300">{(item as CorridorIntersectionMatch).observed_average_speed == null ? "No observation" : `${(item as CorridorIntersectionMatch).observed_average_speed} km/h • ${(item as CorridorIntersectionMatch).observed_congestion || "Unknown"} • ${(item as CorridorIntersectionMatch).observation_count || 0} records`}</td>}
                     <td className="py-3 px-4">
                       <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-emerald-400 border border-slate-700">
                         SRID 4326 Point

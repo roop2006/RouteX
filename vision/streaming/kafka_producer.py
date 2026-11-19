@@ -34,7 +34,7 @@ class TrafficKafkaProducer:
             value={"timestamp": datetime.now(timezone.utc).isoformat(), **traffic_data}
         )
 
-        future.get(timeout=10)
+        return future.get(timeout=10)
 
     def close(self):
 

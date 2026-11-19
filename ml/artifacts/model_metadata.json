@@ -1,0 +1,9 @@
+{
+    "trained_at": "2026-10-03T23:58:52.543253",
+    "classification_model": "random_forest",
+    "forecast_model": "linear_regression",
+    "feature_count": 15,
+    "training_records": 1390,
+    "validation_records": 298,
+    "test_records": 299
+}

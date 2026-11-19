@@ -2,6 +2,8 @@
 
 Updated 2026-11-15: the [Phase 9 repair report](PHASE9_INTEGRATION_REPORT.md) supersedes older verification notes below. Real Flow, Incidents and OSRM calls succeeded with network access outside the sandbox. Provider vehicle counts remain unavailable; no synthetic counts are supplied to the production predictor. Route alerts share the selected geometry and full-geometry PostGIS matching with the map.
 
+For the current reproducible setup, use the [Phase 10 Docker guide](DOCKER.md). Its configuration and container commands supersede the older native startup examples below; the [Phase 10 report](PHASE10_REPORT.md) records current verification.
+
 ## 1. Executive Overview
 
 RouteX integrates the TomTom Traffic API as a production-grade external real-time data source. The integration provides:

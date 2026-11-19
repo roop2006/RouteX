@@ -3,6 +3,7 @@ import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { SelectedRouteProvider } from "../../contexts/SelectedRouteProvider";
+import { LoadingState } from "../common/LoadingState";
 
 export const AppLayout: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -21,7 +22,9 @@ export const AppLayout: React.FC = () => {
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
           <SelectedRouteProvider>
-            <Outlet />
+            <React.Suspense fallback={<LoadingState message="Loading page..." />}>
+              <Outlet />
+            </React.Suspense>
           </SelectedRouteProvider>
         </main>
 

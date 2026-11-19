@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .core.database import Base, engine, SessionLocal
+from .core.config import settings
 from .models.traffic_event import TrafficEvent
 from .models.traffic_stream_event import TrafficStreamEvent
 from .models.intersection import Intersection
@@ -50,16 +51,25 @@ except Exception as exc:
 
 app = FastAPI(title="RouteX API")
 
+# HTTP client debug messages can include provider query-string credentials.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.responses import JSONResponse
+
+
+@app.exception_handler(StarletteHTTPException)
+async def safe_http_error(request, exc):
+    if exc.status_code == 500:
+        return JSONResponse(status_code=500, content={"detail": "Internal service error. Check server diagnostics."})
+    return await http_exception_handler(request, exc)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:8001",
-    ],
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_origins=[origin.strip() for origin in settings.cors_origins.split(',') if origin.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -85,3 +95,15 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "healthy"}
+
+
+@app.get("/health/ready")
+def readiness():
+    from fastapi import HTTPException
+    from sqlalchemy import text
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1 FROM alert_rules LIMIT 1"))
+        return {"status": "ready"}
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database schema is not ready")

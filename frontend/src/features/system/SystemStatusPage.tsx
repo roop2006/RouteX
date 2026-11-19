@@ -132,7 +132,7 @@ export const SystemStatusPage: React.FC = () => {
       status: isCheckingFastApi ? "checking" : fastApiHealth?.healthy ? "healthy" : "unavailable",
       latencyMs: fastApiHealth?.latency,
       details: fastApiHealth?.healthy
-        ? "FastAPI responding on localhost:8001"
+        ? "FastAPI responding at the configured endpoint"
         : fastApiError
         ? (fastApiError as Error).message
         : "Connection refused or timed out",
@@ -184,7 +184,7 @@ export const SystemStatusPage: React.FC = () => {
       id: "kafka",
       name: "Apache Kafka Message Broker",
       type: "Event Streaming Cluster",
-      endpoint: "TCP localhost:9092",
+      endpoint: "Configured Kafka broker",
       status: integrationError ? "unavailable" : probeStatus("kafka"),
       latencyMs: probeComponent("kafka")?.latency_ms ?? undefined,
       details: probeComponent("kafka")?.error || probeComponent("kafka")?.details || "Kafka status is not available",

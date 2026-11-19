@@ -156,7 +156,8 @@ async def save_and_start_video_analysis(
     except Exception as exc:
         if target_path.exists():
             target_path.unlink()
-        raise HTTPException(status_code=500, detail=f"Failed to store video upload: {str(exc)}")
+        logger.error("Video upload storage failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="Unable to store the video upload.")
 
     if total_bytes == 0:
         if target_path.exists():
@@ -633,7 +634,7 @@ def _process_video_worker(job_id: str, file_path: str, intersection_id: Optional
             writer.release()
         with _jobs_lock:
             _jobs[job_id]["status"] = "FAILED"
-            _jobs[job_id]["error"] = f"Pipeline processing exception: {str(exc)}"
+            _jobs[job_id]["error"] = "Video processing failed. Check the worker logs."
 
 
 def get_annotated_video_path(job_id: str) -> Optional[str]:

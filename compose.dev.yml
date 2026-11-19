@@ -1,0 +1,8 @@
+# Optional native Windows access; bindings remain loopback-only.
+services:
+  db:
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5434}:5432"]
+  redis:
+    ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
+  kafka:
+    ports: ["127.0.0.1:${KAFKA_PORT:-9092}:9092"]

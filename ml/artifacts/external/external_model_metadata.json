@@ -1,0 +1,90 @@
+{
+    "model_name": "random_forest",
+    "model_type": "RandomForestRegressor",
+    "model_version": "v1.0.0",
+    "model_artifact_path": "ml/artifacts/external/traffic_volume_model.joblib",
+    "dataset_name": "Metro Interstate Traffic Volume",
+    "dataset_file": "data/datasets/processed/metro_traffic.csv",
+    "date_range": {
+        "start": "2012-10-02 09:00:00",
+        "end": "2018-09-30 23:00:00"
+    },
+    "splits": {
+        "train": {
+            "records": 33740,
+            "start": "2012-10-02 12:00:00",
+            "end": "2017-05-17 20:00:00"
+        },
+        "validation": {
+            "records": 7230,
+            "start": "2017-05-17 21:00:00",
+            "end": "2018-01-25 18:00:00"
+        },
+        "test": {
+            "records": 7230,
+            "start": "2018-01-25 19:00:00",
+            "end": "2018-09-30 22:00:00"
+        }
+    },
+    "training_records": 33740,
+    "validation_records": 7230,
+    "test_records": 7230,
+    "feature_names": [
+        "hour",
+        "day_of_week",
+        "month",
+        "is_weekend",
+        "is_peak_hour",
+        "traffic_lag_1",
+        "traffic_lag_2",
+        "traffic_lag_3",
+        "traffic_rolling_mean_3"
+    ],
+    "feature_order": [
+        "hour",
+        "day_of_week",
+        "month",
+        "is_weekend",
+        "is_peak_hour",
+        "traffic_lag_1",
+        "traffic_lag_2",
+        "traffic_lag_3",
+        "traffic_rolling_mean_3"
+    ],
+    "target": "next_observation_traffic_volume",
+    "forecast_horizon_observations": 1,
+    "forecasting_horizon_description": "Forecasts traffic volume for the next sequential observation (1 step ahead). Timestamp frequency in the dataset is predominantly hourly with occasional repeated observations (e.g. weather reports) and time gaps.",
+    "model_parameters": {
+        "bootstrap": true,
+        "ccp_alpha": 0.0,
+        "criterion": "squared_error",
+        "max_depth": 12,
+        "max_features": 1.0,
+        "max_leaf_nodes": null,
+        "max_samples": null,
+        "min_impurity_decrease": 0.0,
+        "min_samples_leaf": 2,
+        "min_samples_split": 2,
+        "min_weight_fraction_leaf": 0.0,
+        "monotonic_cst": null,
+        "n_estimators": 200,
+        "n_jobs": -1,
+        "oob_score": false,
+        "random_state": 42,
+        "verbose": 0,
+        "warm_start": false
+    },
+    "random_seed": 42,
+    "validation_metrics": {
+        "mae": 265.11774594411474,
+        "rmse": 416.8467966802673,
+        "r2": 0.9550430225162366
+    },
+    "final_test_metrics": {
+        "mae": 253.39381940534375,
+        "rmse": 404.2296704671676,
+        "r2": 0.9584816371462244
+    },
+    "trained_at": "2026-10-21T12:27:40.957866",
+    "model_saved": true
+}

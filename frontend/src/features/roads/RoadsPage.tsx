@@ -92,7 +92,7 @@ export const RoadsPage: React.FC = () => {
 
       {routeMode && routeContext.selectedRoute && (
         <div className="rounded-lg border border-blue-500/30 bg-blue-950/20 p-3 text-xs text-slate-300">
-          Route {routeContext.selectedRoute.route_id} â€¢ {routeContext.origin?.name || "Origin"} â†’ {routeContext.destination?.name || "Destination"}
+          Route {routeContext.selectedRoute.route_id} • {routeContext.origin?.name || "Origin"} → {routeContext.destination?.name || "Destination"}
           <span className="ml-2 text-slate-400">Intersecting roads are marked separately from nearby roads.</span>
         </div>
       )}
@@ -147,7 +147,7 @@ export const RoadsPage: React.FC = () => {
                       {routeMode && <td className="py-3 px-4 font-mono text-slate-300">{(road as CorridorRoadMatch).length_meters == null ? "—" : `${Math.round((road as CorridorRoadMatch).length_meters!)} m`} / {(road as CorridorRoadMatch).distance_to_route_meters == null ? "—" : `${Math.round((road as CorridorRoadMatch).distance_to_route_meters!)} m`}</td>}
                       <td className="py-3 px-4 font-mono text-slate-200">{road.speed_limit} km/h</td>
                       <td className="py-3 px-4 font-mono text-slate-200">{road.lanes} {road.lanes === 1 ? "lane" : "lanes"}</td>
-                      {routeMode && <td className="py-3 px-4 text-slate-300">{(road as CorridorRoadMatch).observed_average_speed == null ? "No associated observation" : `${(road as CorridorRoadMatch).observed_average_speed} km/h â€¢ ${(road as CorridorRoadMatch).observed_congestion || "Unknown"} â€¢ ${(road as CorridorRoadMatch).observation_count || 0} observations`}</td>}
+                      {routeMode && <td className="py-3 px-4 text-slate-300">{(road as CorridorRoadMatch).observed_average_speed == null ? "No associated observation" : `${(road as CorridorRoadMatch).observed_average_speed} km/h • ${(road as CorridorRoadMatch).observed_congestion || "Unknown"} • ${(road as CorridorRoadMatch).observation_count || 0} observations`}</td>}
                       <td className="py-3 px-4">
                         <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-300 border border-slate-700">
                           {road.geometry ? "LineString (GeoJSON)" : "No Geometry"}
@@ -218,7 +218,7 @@ export const RoadsPage: React.FC = () => {
                   {routeRoad && (
                     <div className="mt-3 space-y-1 text-[11px] text-slate-400">
                       <div className={routeRoad.match_relation === "INTERSECTS" ? "text-emerald-300" : "text-amber-300"}>
-                        {routeRoad.match_relation === "INTERSECTS" ? "Intersects selected route" : `Nearby â€¢ ${Math.round(routeRoad.distance_to_route_meters || 0)} m from route`}
+                        {routeRoad.match_relation === "INTERSECTS" ? "Intersects selected route" : `Nearby • ${Math.round(routeRoad.distance_to_route_meters || 0)} m from route`}
                       </div>
                       <div>Length: {routeRoad.length_meters == null ? "Unavailable" : `${Math.round(routeRoad.length_meters)} m`}</div>
                       <div>Route observations: {routeRoad.observation_count || 0}</div>
